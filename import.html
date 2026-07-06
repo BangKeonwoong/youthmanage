@@ -153,16 +153,22 @@ function buildMaps() {
 function normBirth(v) {
   if (!v) return '';
   let s = String(v).trim();
-  if (/^\d{5}$/.test(s)) {
+  if (/^\d{5}$/.test(s)) { // 엑셀 날짜 일련번호
     const d = new Date(Date.UTC(1899, 11, 30) + Number(s) * 864e5);
     return d.getUTCFullYear() + '.' + pad(d.getUTCMonth() + 1) + '.' + pad(d.getUTCDate());
   }
-  s = s.replace(/[년월/\-]/g, '.').replace(/일/g, '').replace(/\s/g, '').replace(/\.+/g, '.').replace(/\.$/, '');
-  const m = s.match(/^(\d{2,4})\.(\d{1,2})\.(\d{1,2})$/);
-  if (m) {
-    let y = Number(m[1]);
+  s = s.replace(/[년월/\-]/g, '.').replace(/일/g, '').replace(/\s/g, '').replace(/\.+/g, '.').replace(/^\.|\.$/g, '');
+  const p = s.split('.').map(Number);
+  if (p.length === 3 && p.every(n => !isNaN(n) && n > 0)) {
+    const parts = s.split('.');
+    let y, m, d;
+    if (parts[0].length === 4 || p[0] > 31) { y = p[0]; m = p[1]; d = p[2]; }        // 연.월.일 (2013.4.20)
+    else if (parts[2].length === 4 || p[2] > 31) { m = p[0]; d = p[1]; y = p[2]; }    // 월.일.연 (4/20/2013)
+    else if (p[1] > 12) { m = p[0]; d = p[1]; y = p[2]; }                             // 월.일.연 2자리 (4/20/13 — 엑셀 미국식)
+    else if (p[0] > 12) { y = p[0]; m = p[1]; d = p[2]; }                             // 연2자리.월.일 (13.4.2)
+    else { m = p[0]; d = p[1]; y = p[2]; }                                            // 애매하면 엑셀 기본(월.일.연)
     if (y < 100) y += (y > 50 ? 1900 : 2000);
-    return y + '.' + pad(m[2]) + '.' + pad(m[3]);
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) return y + '.' + pad(m) + '.' + pad(d);
   }
   return s;
 }
