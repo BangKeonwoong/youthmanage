@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>학생 명단 일괄 가져오기</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.min.css">
+<style>
+body{margin:0;background:#e9e6df;font-family:Pretendard,system-ui,sans-serif;color:#211f1a}
+*{box-sizing:border-box}
+.wrap{max-width:720px;margin:0 auto;min-height:100vh;background:#faf8f3;padding:28px 24px 60px;box-shadow:0 0 40px rgba(33,31,26,.15)}
+h1{font-size:24px;margin:0 0 4px}
+.sub{color:#6d6a5f;font-size:13px;margin-bottom:24px}
+.card{background:#fff;border:1px solid #e8e4da;border-radius:14px;padding:18px;margin-bottom:16px}
+.card h2{font-size:15px;margin:0 0 12px;color:#211f1a}
+input,select{padding:10px 12px;border:1px solid #e8e4da;border-radius:10px;font-size:13px;background:#faf8f3;color:#211f1a}
+input:focus,select:focus{outline:2px solid #2e5d47}
+.btn{display:inline-block;padding:12px 22px;border-radius:10px;background:#2e5d47;color:#f5f2ea;font-weight:600;font-size:14px;cursor:pointer;border:none}
+.btn[disabled]{opacity:.4;cursor:default}
+.err{color:#a3552e;font-size:13px;margin-top:8px}
+.okmsg{color:#2e5d47;font-size:13px;margin-top:8px}
+table{border-collapse:collapse;width:100%;font-size:12px;margin-top:10px}
+th,td{border:1px solid #eeeade;padding:5px 8px;text-align:left;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis}
+th{background:#f3efe6;color:#5c584c}
+.maprow{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.maprow span{width:110px;font-size:13px;color:#8a8578;flex:none}
+.muted{color:#b5b0a2;font-size:12px;line-height:1.6}
+.skip{color:#a3552e}
+#log{font-size:13px;line-height:1.8;margin-top:10px}
+</style>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="firebase-config.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <h1>학생 명단 일괄 가져오기</h1>
+  <div class="sub">일회성 도구입니다. 사용 후 저장소에서 이 파일(import.html)을 삭제하세요.</div>
+
+  <div class="card" id="step1">
+    <h2>1. 교역자 로그인</h2>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input id="lg-id" placeholder="아이디 (admin)">
+      <input id="lg-pw" type="password" placeholder="비밀번호">
+      <button class="btn" onclick="doLogin()">로그인</button>
+    </div>
+    <div id="lg-msg" class="err"></div>
+  </div>
+
+  <div class="card" id="step2" style="display:none">
+    <h2>2. 파일 선택 (.xlsx / .csv)</h2>
+    <input type="file" id="file" accept=".xlsx,.xls,.csv" onchange="loadFile(this.files[0])">
+    <div class="muted" style="margin-top:8px">첫 행에 제목(이름, 생년월일, 주소, 전화번호, 학년 등)이 있는 파일이면 자동 인식됩니다.</div>
+    <div id="f-msg" class="err"></div>
+  </div>
+
+  <div class="card" id="step3" style="display:none">
+    <h2>3. 열 매핑 확인</h2>
+    <div id="colmaps"></div>
+    <h2 style="margin-top:18px">학년 → 반 매핑</h2>
+    <div class="muted" style="margin-bottom:8px">반 목록에 없는 반으로 넣으려면, 먼저 앱 [설정]에서 반을 추가한 뒤 이 페이지를 새로고침하세요.</div>
+    <div id="clsmaps"></div>
+    <button class="btn" style="margin-top:12px" onclick="preview()">미리보기</button>
+  </div>
+
+  <div class="card" id="step4" style="display:none">
+    <h2>4. 미리보기 및 가져오기</h2>
+    <div id="pv"></div>
+    <button class="btn" id="go" style="margin-top:14px" onclick="runImport()">Firestore에 가져오기</button>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+firebase.initializeApp(window.FIREBASE_CONFIG);
+const AUTH = firebase.auth(), DB = firebase.firestore();
+let CLASSES = [], EXISTING = [], ROWS = [], HEADERS = [], PARSED = [];
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const pad = n => (Number(n) < 10 ? '0' + Number(n) : '' + Number(n));
+
+// 자동 로그인 상태면 바로 2단계로
+AUTH.onAuthStateChanged(u => { if (u) afterLogin(); });
+
+async function doLogin() {
+  const id = $('lg-id').value.trim(), pw = $('lg-pw').value;
+  if (!id || !pw) { $('lg-msg').textContent = '아이디와 비밀번호를 입력하세요.'; return; }
+  const email = id.includes('@') ? id : id + (window.EMAIL_SUFFIX || '@example.com');
+  try { await AUTH.signInWithEmailAndPassword(email, pw); }
+  catch (e) { $('lg-msg').textContent = '로그인 실패: 아이디/비밀번호를 확인하세요.'; }
+}
+
+async function afterLogin() {
+  try {
+    const meta = await DB.collection('meta').doc('config').get();
+    CLASSES = meta.exists ? (meta.data().classes || []) : [];
+    const snap = await DB.collection('students').get();
+    EXISTING = snap.docs.map(d => d.data());
+    $('lg-msg').className = 'okmsg';
+    $('lg-msg').textContent = '로그인됨 · 등록된 반 ' + CLASSES.length + '개 · 기존 학생 ' + EXISTING.length + '명';
+    $('step2').style.display = '';
+  } catch (e) { $('lg-msg').textContent = '데이터 로드 실패: ' + (e.message || e); }
+}
+
+// ── 파일 파싱
+async function loadFile(file) {
+  if (!file) return;
+  try {
+    const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const all = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
+    // 제목 행 찾기: 처음 5행 중 '이름' 또는 '성명' 포함 행
+    let hi = 0;
+    for (let i = 0; i < Math.min(5, all.length); i++) {
+      if (all[i].some(c => /이름|성명/.test(String(c)))) { hi = i; break; }
+    }
+    HEADERS = all[hi].map(c => String(c).trim());
+    ROWS = all.slice(hi + 1).filter(r => r.some(c => String(c).trim()));
+    if (!ROWS.length) { $('f-msg').textContent = '데이터 행이 없습니다.'; return; }
+    $('f-msg').textContent = '';
+    buildMaps();
+    $('step3').style.display = '';
+    $('step4').style.display = 'none';
+  } catch (e) { $('f-msg').textContent = '파일을 읽지 못했습니다: ' + (e.message || e); }
+}
+
+const FIELDS = [
+  ['name', '이름 (필수)', /이름|성명/],
+  ['birth', '생년월일', /생년|생일|birth/i],
+  ['phone', '전화번호 (본인)', /^전화|연락처|휴대|핸드폰|phone/i],
+  ['parentPhone', '보호자 연락처', /보호자|부모|학부모/],
+  ['address', '주소', /주소/],
+  ['school', '학교', /학교/],
+  ['grade', '학년(반)', /학년|반$|class/i]
+];
+
+function buildMaps() {
+  $('colmaps').innerHTML = FIELDS.map(([key, label, re]) => {
+    let guess = HEADERS.findIndex(hd => re.test(hd));
+    return `<div class="maprow"><span>${label}</span>
+      <select id="col-${key}">
+        <option value="-1">— 없음 —</option>
+        ${HEADERS.map((hd, i) => `<option value="${i}" ${i === guess ? 'selected' : ''}>${esc(hd || '(열 ' + (i + 1) + ')')}</option>`).join('')}
+      </select></div>`;
+  }).join('');
+  $('col-grade').onchange = buildClsMaps;
+  buildClsMaps();
+}
+
+function buildClsMaps() {
+  const gi = Number($('col-grade').value);
+  const opts = c => CLASSES.map(x => `<option value="${esc(x)}" ${x === c ? 'selected' : ''}>${esc(x)}</option>`).join('');
+  if (gi < 0) {
+    $('clsmaps').innerHTML = `<div class="maprow"><span>모든 학생을</span><select id="cls-all">${opts()}</select><span style="width:auto">반으로</span></div>`;
+    return;
+  }
+  const vals = [...new Set(ROWS.map(r => String(r[gi] || '').trim()).filter(Boolean))];
+  $('clsmaps').innerHTML = vals.map((v, i) => {
+    const match = CLASSES.includes(v) ? v : (CLASSES.find(c => c.startsWith(v)) || CLASSES[0]);
+    return `<div class="maprow"><span>"${esc(v)}" →</span><select id="cls-${i}" data-val="${esc(v)}">${opts(match)}</select></div>`;
+  }).join('') || '<div class="muted">학년 열에 값이 없습니다.</div>';
+}
+
+// ── 값 정규화
+function normBirth(v) {
+  if (!v) return '';
+  let s = String(v).trim();
+  if (/^\d{5}$/.test(s)) { // 엑셀 날짜 일련번호
+    const d = new Date(Date.UTC(1899, 11, 30) + Number(s) * 864e5);
+    return d.getUTCFullYear() + '.' + pad(d.getUTCMonth() + 1) + '.' + pad(d.getUTCDate());
+  }
+  s = s.replace(/[년월/\-]/g, '.').replace(/일/g, '').replace(/\s/g, '').replace(/\.+/g, '.').replace(/\.$/, '');
+  const m = s.match(/^(\d{2,4})\.(\d{1,2})\.(\d{1,2})$/);
+  if (m) {
+    let y = Number(m[1]);
+    if (y < 100) y += (y > 50 ? 1900 : 2000);
+    return y + '.' + pad(m[2]) + '.' + pad(m[3]);
+  }
+  return s;
+}
+function normPhone(v) {
+  if (!v) return '';
+  let d = String(v).replace(/\D/g, '');
+  if (d.length === 10 && d.startsWith('10')) d = '0' + d;
+  if (d.length === 11) return d.slice(0, 3) + '-' + d.slice(3, 7) + '-' + d.slice(7);
+  if (d.length === 10) return d.slice(0, 3) + '-' + d.slice(3, 6) + '-' + d.slice(6);
+  return String(v).trim();
+}
+
+function collectParsed() {
+  const col = {};
+  FIELDS.forEach(([key]) => col[key] = Number($('col-' + key).value));
+  if (col.name < 0) { alert('이름 열을 선택해주세요.'); return null; }
+  const clsMap = {};
+  document.querySelectorAll('[id^="cls-"]').forEach(el => {
+    if (el.id === 'cls-all') clsMap['*'] = el.value;
+    else clsMap[el.getAttribute('data-val')] = el.value;
+  });
+  const dupKey = s => (s.name || '') + '|' + (s.birth || '');
+  const existKeys = new Set(EXISTING.map(dupKey));
+  const seen = new Set();
+  return ROWS.map(r => {
+    const get = k => col[k] >= 0 ? String(r[col[k]] || '').trim() : '';
+    const name = get('name');
+    if (!name) return null;
+    const gradeVal = get('grade');
+    const cls = clsMap['*'] || clsMap[gradeVal] || CLASSES[0] || '';
+    const st = {
+      name, cls, birth: normBirth(get('birth')), phone: normPhone(get('phone')),
+      parentPhone: normPhone(get('parentPhone')), address: get('address'), school: get('school'),
+      sacr: '없음', trait: '', att: {}, reasons: {}, care: null, notes: [], vchk: {}
+    };
+    const key = dupKey(st);
+    st._dup = existKeys.has(key) || seen.has(key);
+    seen.add(key);
+    return st;
+  }).filter(Boolean);
+}
+
+function preview() {
+  PARSED = collectParsed();
+  if (!PARSED) return;
+  const dups = PARSED.filter(s => s._dup).length;
+  $('pv').innerHTML = `<div class="muted">총 ${PARSED.length}명 · 새로 추가 ${PARSED.length - dups}명 ${dups ? '· <span class="skip">중복(이름+생년월일 일치)으로 건너뜀 ' + dups + '명</span>' : ''}</div>
+  <div style="overflow-x:auto"><table><tr><th></th><th>이름</th><th>반</th><th>생년월일</th><th>전화번호</th><th>보호자</th><th>주소</th><th>학교</th></tr>
+  ${PARSED.map(s => `<tr ${s._dup ? 'style="opacity:.45"' : ''}><td>${s._dup ? '건너뜀' : '추가'}</td><td>${esc(s.name)}</td><td>${esc(s.cls)}</td><td>${esc(s.birth)}</td><td>${esc(s.phone)}</td><td>${esc(s.parentPhone)}</td><td>${esc(s.address)}</td><td>${esc(s.school)}</td></tr>`).join('')}
+  </table></div>`;
+  $('step4').style.display = '';
+  $('go').disabled = false;
+  $('log').textContent = '';
+}
+
+async function runImport() {
+  const list = PARSED.filter(s => !s._dup);
+  if (!list.length) { $('log').textContent = '추가할 학생이 없습니다.'; return; }
+  if (!confirm(list.length + '명을 추가할까요?')) return;
+  $('go').disabled = true;
+  let done = 0;
+  try {
+    for (let i = 0; i < list.length; i += 400) {
+      const batch = DB.batch();
+      list.slice(i, i + 400).forEach((s, j) => {
+        const doc = Object.assign({}, s, { ts: Date.now() + i + j });
+        delete doc._dup;
+        batch.set(DB.collection('students').doc(), doc);
+      });
+      await batch.commit();
+      done += Math.min(400, list.length - i);
+      $('log').textContent = done + ' / ' + list.length + '명 저장됨…';
+    }
+    $('log').innerHTML = '<b style="color:#2e5d47">완료! ' + done + '명을 추가했습니다.</b><br>앱에서 확인하세요. 이 파일(import.html)은 이제 저장소에서 삭제해도 됩니다.';
+  } catch (e) {
+    $('log').textContent = '오류 (' + done + '명까지 저장됨): ' + (e.message || e);
+    $('go').disabled = false;
+  }
+}
+</script>
+</body>
+</html>
