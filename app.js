@@ -188,7 +188,7 @@ const secLabel = 'padding:20px 20px 6px;font:600 12px Pretendard;color:#8a8578;l
 
 // ══ 설정 안내 화면 (firebase-config.js 미입력 시)
 function setupView() {
-  return `<div style="max-width:390px;margin:0 auto;min-height:100vh;background:#faf8f3;display:flex;flex-direction:column;justify-content:center;padding:36px 28px;box-shadow:0 0 40px rgba(33,31,26,.15)">
+  return `<div style="width:100%;max-width:390px;margin:0 auto;min-height:100vh;overflow-x:hidden;background:#faf8f3;display:flex;flex-direction:column;justify-content:center;padding:36px 28px;box-shadow:0 0 40px rgba(33,31,26,.15)">
     <div style="font:600 26px 'MaruBuri',serif;color:#211f1a">설정이 필요합니다</div>
     <div style="font:400 14px Pretendard;color:#6d6a5f;margin-top:14px;line-height:1.7">
       <b>firebase-config.js</b> 파일에 Firebase 설정값이 아직 입력되지 않았습니다.<br><br>
@@ -219,7 +219,7 @@ function loginView() {
       capture(); render();
     }
   });
-  return `<div style="max-width:390px;margin:0 auto;min-height:100vh;background:#faf8f3;display:flex;flex-direction:column;justify-content:center;padding:36px 28px;box-shadow:0 0 40px rgba(33,31,26,.15)">
+  return `<div style="width:100%;max-width:390px;margin:0 auto;min-height:100vh;overflow-x:hidden;background:#faf8f3;display:flex;flex-direction:column;justify-content:center;padding:36px 28px;box-shadow:0 0 40px rgba(33,31,26,.15)">
     <div style="font:600 12px Pretendard;color:#8a8578;letter-spacing:.08em">CHURCH STUDENT CARE</div>
     <div style="font:600 32px 'MaruBuri',serif;color:#211f1a;margin-top:10px">중고등부<br>학생관리</div>
     <div style="font:400 14px Pretendard;color:#6d6a5f;margin-top:10px">교사·교역자 전용 페이지입니다.</div>
@@ -392,7 +392,7 @@ function attendView(scopeCls) {
   const list = stuOf(scopeCls);
   const done = list.filter(x => x.att && x.att[CUR]).length;
   const REASONS = ['질병', '학원·시험', '가족 일정', '여행', '미입력'];
-  const btn = (on, color) => 'cursor:pointer;font:600 13px Pretendard;padding:9px 13px;border-radius:9px;' + (on ? 'color:#fff;background:' + color : 'color:#8a8578;background:#f3efe6');
+  const btn = (on, color) => 'cursor:pointer;flex:none;white-space:nowrap;font:600 13px Pretendard;padding:9px 11px;border-radius:9px;' + (on ? 'color:#fff;background:' + color : 'color:#8a8578;background:#f3efe6');
   const rows = list.map(x => {
     const a = x.att && x.att[CUR];
     const set = val => h(async () => {
@@ -815,7 +815,7 @@ function render() {
     </div>`;
   }).join('');
 
-  el.innerHTML = `<div style="max-width:390px;margin:0 auto;min-height:100vh;background:#faf8f3;display:flex;flex-direction:column;box-shadow:0 0 40px rgba(33,31,26,.15);position:relative">
+  el.innerHTML = `<div style="width:100%;max-width:390px;margin:0 auto;min-height:100vh;overflow-x:hidden;background:#faf8f3;display:flex;flex-direction:column;box-shadow:0 0 40px rgba(33,31,26,.15);position:relative">
     ${headerView()}
     <div style="flex:1;overflow-y:auto;padding-bottom:16px">${body}</div>
     ${S.toast ? `<div style="position:sticky;bottom:74px;display:flex;justify-content:center;pointer-events:none;z-index:5">
