@@ -170,10 +170,17 @@ function buildClsMaps() {
     return;
   }
   const vals = [...new Set(ROWS.map(r => String(r[gi] || '').trim()).filter(Boolean))];
-  $('clsmaps').innerHTML = vals.map((v, i) => {
-    const match = CLASSES.includes(v) ? v : (CLASSES.find(c => c.startsWith(v)) || CLASSES[0]);
-    return `<div class="maprow"><span>"${esc(v)}" →</span><select id="cls-${i}" data-val="${esc(v)}">${opts(match)}</select></div>`;
-  }).join('') || '<div class="muted">학년 열에 값이 없습니다.</div>';
+  $('clsmaps').innerHTML = `
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:12px;cursor:pointer">
+      <input type="checkbox" id="autocls" checked onchange="document.getElementById('manual-maps').style.display=this.checked?'none':''">
+      <b>학년 값(${vals.map(esc).join(', ')})을 그대로 반으로 사용</b> — 반 목록에 없으면 자동 추가
+    </label>
+    <div id="manual-maps" style="display:none">
+    ${vals.map((v, i) => {
+      const match = CLASSES.includes(v) ? v : (CLASSES.find(c => c.startsWith(v)) || CLASSES[0]);
+      return `<div class="maprow"><span>"${esc(v)}" →</span><select id="cls-${i}" data-val="${esc(v)}">${opts(match)}</select></div>`;
+    }).join('')}
+    </div>`;
 }
 
 // ── 값 정규화
@@ -206,6 +213,7 @@ function collectParsed() {
   const col = {};
   FIELDS.forEach(([key]) => col[key] = Number($('col-' + key).value));
   if (col.name < 0) { alert('이름 열을 선택해주세요.'); return null; }
+  const auto = $('autocls') && $('autocls').checked;
   const clsMap = {};
   document.querySelectorAll('[id^="cls-"]').forEach(el => {
     if (el.id === 'cls-all') clsMap['*'] = el.value;
@@ -219,7 +227,7 @@ function collectParsed() {
     const name = get('name');
     if (!name) return null;
     const gradeVal = get('grade');
-    const cls = clsMap['*'] || clsMap[gradeVal] || CLASSES[0] || '';
+    const cls = (auto && gradeVal) ? gradeVal : (clsMap['*'] || clsMap[gradeVal] || CLASSES[0] || '');
     const st = {
       name, cls, birth: normBirth(get('birth')), phone: normPhone(get('phone')),
       fatherPhone: normPhone(get('parentF')), motherPhone: normPhone(get('parentM')),
@@ -254,6 +262,13 @@ async function runImport() {
   $('go').disabled = true;
   let done = 0;
   try {
+    // 반 목록에 없는 반 자동 추가
+    const need = [...new Set(list.map(s => s.cls).filter(c => c && !CLASSES.includes(c)))];
+    if (need.length) {
+      CLASSES = CLASSES.concat(need);
+      await DB.collection('meta').doc('config').set({ classes: CLASSES });
+      $('log').textContent = '반 추가됨: ' + need.join(', ');
+    }
     for (let i = 0; i < list.length; i += 400) {
       const batch = DB.batch();
       list.slice(i, i + 400).forEach((s, j) => {
