@@ -3,10 +3,15 @@
 
 // ── 전역 상태
 let S = {
-  me: null, data: { classes: [], users: [], students: [], visits: [] },
+  me: null, data: { classes: [], users: [], students: [], visits: [], posts: [], comments: [], events: [], eventVotes: [] },
   cls: '전체', screen: 'home', sid: null, toast: '',
-  vOpen: false, vType: '심방', edOn: false, edSacr: '없음', adOpen: false,
-  delArm: false, loginErr: '', loaded: false, busy: false, shirtPick: null, shirtPickU: null
+  vOpen: false, vType: '심방', careMode: 'visits', communityMode: 'board',
+  boardOpen: false, boardPostId: null, boardEditId: null,
+  calendarMonth: null, calendarDate: null, eventOpen: false, eventEditId: null, eventPollEnabled: false,
+  edOn: false, edSacr: '없음', adOpen: false,
+  delArm: false, loginErr: '', loaded: false, busy: false, shirtPick: null, shirtPickU: null,
+  retreatPick: null, retreatPickU: null, shirtStatsOpen: false, retreatStatsOpen: false,
+  lastScrollTop: 0, scrollPositions: {}
 };
 window.H = [];
 const h = fn => { H.push(fn); return 'H[' + (H.length - 1) + '](event)'; };
@@ -15,7 +20,9 @@ const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g,
 // 폼 입력값 보존 (재렌더링 시)
 const FORM_IDS = ['lg-id', 'v-text', 'v-stu', 'ad-name', 'ad-phone', 'ad-birth', 'ad-father', 'ad-mother', 'ad-parent', 'ad-addr',
   'ed-name', 'ed-phone', 'ed-fatherPhone', 'ed-motherPhone', 'ed-parentPhone', 'ed-address', 'ed-birth', 'ed-school', 'ed-trait',
-  'pw-old', 'pw-new', 'u-name', 'u-username', 'u-pw', 'u-role', 'u-cls', 'cls-text', 'note-text'];
+  'pw-old', 'pw-new', 'u-name', 'u-username', 'u-pw', 'u-role', 'u-cls', 'cls-text', 'note-text',
+  'board-category', 'board-title', 'board-body', 'comment-body',
+  'event-title', 'event-date', 'event-time', 'event-note'];
 let F = {};
 function capture() { FORM_IDS.forEach(id => { const e = document.getElementById(id); if (e) F[id] = e.value; }); }
 function clearF(prefix) { Object.keys(F).forEach(k => { if (k.startsWith(prefix)) delete F[k]; }); }
@@ -37,11 +44,20 @@ const LONG_ABS_N = 3, BDAY_DAYS = 30;
 const SHIRT_SIZES = ['미선택', '130', '140', '150', 'XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '신청X'];
 const SHIRT_START = '2026-07-06', SHIRT_END = '2026-07-12';
 const shirtActive = () => { const t = todayISO(); return t >= SHIRT_START && t <= SHIRT_END; };
+// Retreat attendance survey (limited-time event)
+const RETREAT_STUDENT_OPTIONS = ['\uBBF8\uC120\uD0DD', '\uCC38\uC11D', '\uBD88\uCC38', '\uBD80\uBD84\uCC38\uC11D'];
+const RETREAT_TEACHER_OPTIONS = ['\uBBF8\uC120\uD0DD', '\uCC38\uC11D', '\uBD88\uCC38', '\uBD80\uBD84\uCC38\uC11D', '\uC800\uB141\uBC29\uBB38'];
+const RETREAT_START = '2026-07-12', RETREAT_END = '2026-07-26';
+const retreatActive = () => { const t = todayISO(); return t >= RETREAT_START && t <= RETREAT_END; };
 const DEFAULT_CLASSES = ['중1-1', '중1-2', '중2', '중3-1', '중3-2', '중3-3', '고1-1', '고1-2', '고2', '고3'];
 
 // ── 데이터 헬퍼
 const students = () => S.data.students || [];
 const visits = () => S.data.visits || [];
+const posts = () => S.data.posts || [];
+const comments = () => S.data.comments || [];
+const events = () => S.data.events || [];
+const eventVotes = () => S.data.eventVotes || [];
 const classes = () => S.data.classes || [];
 const users = () => S.data.users || [];
 function teacherOf(cls) { const u = users().find(x => x.role === 'teacher' && x.cls === cls); return u ? u.name : '담당 미지정'; }
@@ -161,6 +177,23 @@ function attach() {
     S.data.visits = q.docs.map(d => Object.assign({ id: d.id }, d.data()));
     maybeRender();
   }, e => console.error(e)));
+  // 게시판
+  unsubs.push(DB.collection('posts').orderBy('ts', 'desc').onSnapshot(q => {
+    S.data.posts = q.docs.map(d => Object.assign({ id: d.id }, d.data()));
+    maybeRender();
+  }, e => console.error(e)));
+  unsubs.push(DB.collection('comments').orderBy('ts', 'asc').onSnapshot(q => {
+    S.data.comments = q.docs.map(d => Object.assign({ id: d.id }, d.data()));
+    maybeRender();
+  }, e => console.error(e)));
+  unsubs.push(DB.collection('events').orderBy('date', 'asc').onSnapshot(q => {
+    S.data.events = q.docs.map(d => Object.assign({ id: d.id }, d.data()));
+    maybeRender();
+  }, e => console.error(e)));
+  unsubs.push(DB.collection('eventVotes').onSnapshot(q => {
+    S.data.eventVotes = q.docs.map(d => Object.assign({ id: d.id }, d.data()));
+    maybeRender();
+  }, e => console.error(e)));
 }
 
 // 입력 중이면 화면을 갈아엎지 않음 (데이터만 갱신, 다음 동작 때 반영)
@@ -181,6 +214,19 @@ const FV = () => firebase.firestore.FieldValue;
 let toastT = null;
 function flash(msg) { S.toast = msg; render(); clearTimeout(toastT); toastT = setTimeout(() => { S.toast = ''; capture(); render(); }, 1800); }
 function up(mut) { capture(); mut && mut(); render(); }
+function onAppScroll(el) {
+  const current = Math.max(0, el.scrollTop);
+  const delta = current - S.lastScrollTop;
+  const nav = document.getElementById('bottom-nav');
+  if (!nav) return;
+  if (current <= 8 || delta > 8) nav.style.transform = 'translateY(0)';
+  else if (delta < -8) nav.style.transform = 'translateY(calc(100% + 2px))';
+  if (Math.abs(delta) > 8 || current <= 8) S.lastScrollTop = current;
+}
+function scrollTarget(previousKey, nextKey, previousTop, positions) {
+  if (previousKey) positions[previousKey] = previousTop;
+  return previousKey === nextKey ? previousTop : (positions[nextKey] || 0);
+}
 function openStu(id) { return () => up(() => { S.sid = id; S.edOn = false; S.delArm = false; clearF('note-'); }); }
 function curStu() { return S.sid ? students().find(x => x.id === S.sid) : null; }
 
@@ -193,8 +239,8 @@ const secLabel = 'padding:20px 20px 6px;font:600 12px Pretendard;color:#8a8578;l
 // ══ 선생님 캠프티 입력 (이벤트 기간에만 표시)
 function userShirtRows(list) {
   if (!shirtActive() || !list.length) return '';
-  return `<div style="${secLabel}">선생님 캠프티</div>
-  <div style="margin:0 20px;background:#fff;border:1px solid #e8e4da;border-radius:14px;padding:4px 16px">
+  return `<div style="font:600 12px Pretendard;color:#2e5d47;padding:4px 2px 7px">선생님 캠프티</div>
+  <div style="background:#fff;border:1px solid #e8e4da;border-radius:14px;padding:4px 16px">
     ${list.map(u => {
       const btn = `<span onclick="${h(() => up(() => { S.shirtPickU = S.shirtPickU === u.email ? null : u.email; }))}" style="cursor:pointer;font:600 12px Pretendard;flex:none;padding:5px 12px;border-radius:99px;${u.shirt ? 'color:#f5f2ea;background:#2e5d47' : 'color:#2e5d47;border:1px dashed #9db8a8;background:#fff'}">${esc(u.shirt || '캠프티')}</span>`;
       const picker = S.shirtPickU === u.email ? `<div style="display:flex;flex-wrap:wrap;gap:6px;padding:2px 0 10px;border-bottom:1px solid #eeeade">
@@ -215,9 +261,67 @@ function shirtStats(list) {
   list.forEach(x => { const k = x.shirt || '미선택'; counts[k] = (counts[k] || 0) + 1; });
   const chips = SHIRT_SIZES.filter(sz => counts[sz]).map(sz =>
     `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #eeeade;font:500 13px Pretendard;color:${sz === '미선택' ? '#a3552e' : '#211f1a'}"><span>${sz}</span><b>${counts[sz]}명</b></div>`).join('');
-  const done = list.filter(x => x.shirt).length;
-  return `<div style="${secLabel}">캠프티 사이즈 통계 <span style="font:400 11px;color:#b5b0a2">· ${md(SHIRT_END)}까지 조사 · ${done}/${list.length} 완료</span></div>
-    <div style="margin:0 20px;background:#fff;border:1px solid #e8e4da;border-radius:14px;padding:6px 16px">${chips}<div style="height:6px"></div></div>`;
+  return `<div style="font:600 12px Pretendard;color:#7a6234;padding:16px 2px 7px">캠프티 사이즈 통계</div>
+    <div style="background:#fff;border:1px solid #e8e4da;border-radius:14px;padding:6px 16px">${chips}<div style="font:400 11px Pretendard;color:#b5b0a2;padding-top:8px">${md(SHIRT_END)}까지 조사</div><div style="height:6px"></div></div>`;
+}
+
+function shirtEventSection(teacherList, allList) {
+  if (!shirtActive() || !allList.length) return '';
+  const done = allList.filter(x => x.shirt).length;
+  return `<div onclick="${h(() => up(() => { S.shirtStatsOpen = !S.shirtStatsOpen; }))}" style="${secLabel};display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer" role="button" aria-expanded="${S.shirtStatsOpen}">
+      <span>캠프티 조사 <span style="font:400 11px;color:#b5b0a2">· ${done}/${allList.length} 완료</span></span>
+      <span style="font:600 16px Pretendard;color:#2e5d47;transform:rotate(${S.shirtStatsOpen ? '180deg' : '0deg'});transition:transform .22s ease">⌄</span>
+    </div>
+    ${S.shirtStatsOpen ? `<div style="margin:0 20px;animation:sectionReveal .2s ease-out">${userShirtRows(teacherList)}${shirtStats(allList)}</div>` : ''}`;
+}
+
+// Teacher and pastor retreat attendance input
+function userRetreatRows(list) {
+  if (!retreatActive() || !list.length) return '';
+  return `<div style="font:600 12px Pretendard;color:#7a6234;padding:4px 2px 7px">\uAD50\uC0AC\u00B7\uAD50\uC5ED\uC790 \uC218\uB828\uD68C \uCC38\uC11D \uC5EC\uBD80</div>
+  <div style="background:#fff;border:1px solid #d8cdb5;border-radius:14px;padding:4px 16px">
+    ${list.map(u => {
+      const btn = `<span onclick="${h(() => up(() => { S.retreatPickU = S.retreatPickU === u.email ? null : u.email; }))}" style="cursor:pointer;font:600 12px Pretendard;flex:none;padding:5px 12px;border-radius:99px;${u.retreatAttendance ? 'color:#f5f2ea;background:#7a6234' : 'color:#7a6234;border:1px dashed #c8b78f;background:#fff'}">${esc(u.retreatAttendance || '\uCC38\uC11D \uC5EC\uBD80')}</span>`;
+      const picker = S.retreatPickU === u.email ? `<div style="display:flex;flex-wrap:wrap;gap:6px;padding:2px 0 10px;border-bottom:1px solid #eeeade">
+        ${RETREAT_TEACHER_OPTIONS.map(status => `<span onclick="${h(async () => { await fsTry(DB.collection('users').doc(u.email).update({ retreatAttendance: status === '\uBBF8\uC120\uD0DD' ? FV().delete() : status })); S.retreatPickU = null; capture(); render(); })}" style="cursor:pointer;flex:none;font:600 12px Pretendard;padding:7px 12px;border-radius:99px;${(u.retreatAttendance || '\uBBF8\uC120\uD0DD') === status ? 'color:#f5f2ea;background:#211f1a' : 'color:#8a8578;border:1px solid #e8e4da'}">${status}</span>`).join('')}
+      </div>` : '';
+      return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid #eeeade">
+        <span style="font:600 14px Pretendard;color:#211f1a">${esc(u.name)} <span style="font:400 12px Pretendard;color:#b5b0a2">${u.role === 'pastor' ? '\uAD50\uC5ED\uC790' : '\uC120\uC0DD\uB2D8'}</span></span>${btn}
+      </div>${picker}`;
+    }).join('')}
+    <div style="height:4px"></div>
+  </div>`;
+}
+
+// Retreat attendance statistics (separate from shirt statistics)
+function retreatStats(studentList, teacherList) {
+  if (!retreatActive() || (!studentList.length && !teacherList.length)) return '';
+  const group = (title, list, options) => {
+    const counts = {};
+    list.forEach(x => { const k = x.retreatAttendance || '\uBBF8\uC120\uD0DD'; counts[k] = (counts[k] || 0) + 1; });
+    const rows = options.filter(status => counts[status]).map(status =>
+      `<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #eeeade;font:500 13px Pretendard;color:${status === '\uBBF8\uC120\uD0DD' ? '#a3552e' : '#211f1a'}"><span>${status}</span><b>${counts[status]}\uBA85</b></div>`).join('');
+    const done = list.filter(x => x.retreatAttendance).length;
+    return `<div style="font:600 12px Pretendard;color:#7a6234;padding:${title === '\uD559\uC0DD' ? '4px' : '14px'} 0 4px">${title} <span style="font:400 11px;color:#b5b0a2">\u00B7 ${done}/${list.length} \uC644\uB8CC</span></div>${rows || `<div style="font:400 12px Pretendard;color:#b5b0a2;padding:6px 0">\uB300\uC0C1\uC790 \uC5C6\uC74C</div>`}`;
+  };
+  return `<div style="font:600 12px Pretendard;color:#7a6234;padding:16px 2px 7px">\uC218\uB828\uD68C \uCC38\uC11D \uD1B5\uACC4</div>
+    <div style="background:#fff;border:1px solid #d8cdb5;border-radius:14px;padding:6px 16px">
+      ${group('\uD559\uC0DD', studentList, RETREAT_STUDENT_OPTIONS)}
+      ${group('\uAD50\uC0AC\u00B7\uAD50\uC5ED\uC790', teacherList, RETREAT_TEACHER_OPTIONS)}
+      <div style="font:400 11px Pretendard;color:#b5b0a2;padding-top:8px">${md(RETREAT_END)}\uAE4C\uC9C0 \uC870\uC0AC</div>
+      <div style="height:6px"></div>
+    </div>`;
+}
+
+function retreatEventSection(studentList, teacherList) {
+  if (!retreatActive() || (!studentList.length && !teacherList.length)) return '';
+  const all = studentList.concat(teacherList);
+  const done = all.filter(x => x.retreatAttendance).length;
+  return `<div onclick="${h(() => up(() => { S.retreatStatsOpen = !S.retreatStatsOpen; }))}" style="${secLabel};display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer" role="button" aria-expanded="${S.retreatStatsOpen}">
+      <span>\uC218\uB828\uD68C \uCC38\uC11D \uC870\uC0AC <span style="font:400 11px;color:#b5b0a2">\u00B7 ${done}/${all.length} \uC644\uB8CC</span></span>
+      <span style="font:600 16px Pretendard;color:#7a6234;transform:rotate(${S.retreatStatsOpen ? '180deg' : '0deg'});transition:transform .22s ease">⌄</span>
+    </div>
+    ${S.retreatStatsOpen ? `<div style="margin:0 20px;animation:sectionReveal .2s ease-out">${userRetreatRows(teacherList)}${retreatStats(studentList, teacherList)}</div>` : ''}`;
 }
 
 // ══ 설정 안내 화면 (firebase-config.js 미입력 시)
@@ -272,20 +376,28 @@ function headerView() {
   const isPastor = S.me.role === 'pastor';
   if (curStu()) return '';
   let title, subtitle;
-  if (!isPastor) { title = S.me.cls + '반'; subtitle = '담당 ' + S.me.name + ' 선생님 · 재적 ' + stuOf(S.me.cls).length + '명'; }
+  const boardScreen = S.screen === 'board';
+  if (boardScreen) { title = '중고등부'; subtitle = S.communityMode === 'calendar' ? '전체 교사·교역자가 함께 관리하는 공유 일정' : '전체 교사·교역자가 함께하는 통합 게시판'; }
+  else if (!isPastor) { title = S.me.cls + '반'; subtitle = '담당 ' + S.me.name + ' 선생님 · 재적 ' + stuOf(S.me.cls).length + '명'; }
   else if (S.cls === '전체') { title = '중고등부'; subtitle = classes().length + '개 반 · 재적 ' + students().length + '명'; }
   else { title = S.cls + '반'; subtitle = '담당 ' + teacherOf(S.cls) + ' 선생님 · 재적 ' + stuOf(S.cls).length + '명'; }
-  const chips = isPastor ? `<div style="display:flex;gap:7px;overflow-x:auto;padding-bottom:12px;scrollbar-width:none">
+  const chips = isPastor && !boardScreen ? `<div style="display:flex;gap:7px;overflow-x:auto;padding-bottom:12px;scrollbar-width:none">
     ${['전체'].concat(classes()).map(c => `<div onclick="${h(() => up(() => { S.cls = c; S.sid = null; }))}" style="flex:none;font:600 13px Pretendard;padding:7px 13px;border-radius:99px;cursor:pointer;${S.cls === c ? 'background:#211f1a;color:#f5f2ea' : 'background:#fff;color:#6d6a5f;border:1px solid #e8e4da'}">${esc(c)}</div>`).join('')}
+  </div>` : '';
+  const communityTabs = boardScreen ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;margin-bottom:12px;background:#eeeade;border-radius:12px">
+    ${[['board', '게시판'], ['calendar', '일정']].map(([key, label]) => `<div onclick="${h(() => up(() => { S.communityMode = key; S.boardPostId = null; S.boardOpen = false; S.eventOpen = false; S.eventEditId = null; S.eventPollEnabled = false; }))}" style="text-align:center;padding:8px;border-radius:9px;cursor:pointer;font:700 13px Pretendard;${S.communityMode === key ? 'background:#fff;color:#211f1a;box-shadow:0 1px 4px rgba(33,31,26,.12)' : 'color:#8a8578'}">${label}</div>`).join('')}
   </div>` : '';
   return `<div style="padding:16px 20px 0;border-bottom:1px solid #e8e4da;background:#faf8f3">
     <div style="display:flex;justify-content:space-between;align-items:center">
       <div style="font:600 12px Pretendard;color:#8a8578;letter-spacing:.04em">${todayLabel()}</div>
-      <div onclick="${h(() => up(() => { S.screen = 'settings'; S.sid = null; }))}" style="font:600 12px Pretendard;color:#2e5d47;border:1px solid #cfc9ba;padding:5px 12px;border-radius:99px;cursor:pointer;background:#fff">${esc(S.me.name)} · ${isPastor ? '교역자' : '교사'}</div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <div style="font:600 12px Pretendard;color:#2e5d47;border:1px solid #cfc9ba;padding:5px 12px;border-radius:99px;background:#fff">${esc(S.me.name)} · ${isPastor ? '교역자' : '교사'}</div>
+        <div onclick="${h(() => up(() => { S.screen = 'settings'; S.sid = null; }))}" role="button" aria-label="설정 열기" title="설정" style="width:29px;height:29px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font:600 15px Pretendard;${S.screen === 'settings' ? 'background:#2e5d47;color:#fff' : 'background:#fff;color:#6d6a5f;border:1px solid #cfc9ba'}">⚙</div>
+      </div>
     </div>
     <div style="font:600 26px 'MaruBuri',serif;color:#211f1a;margin-top:8px">${esc(title)}</div>
     <div style="font:400 13px Pretendard;color:#6d6a5f;margin-top:2px;padding-bottom:12px">${esc(subtitle)}</div>
-    ${chips}
+    ${communityTabs || chips}
   </div>`;
 }
 
@@ -319,8 +431,8 @@ function overviewView() {
     </div>
     <div style="${secLabel};padding-top:20px;padding-bottom:8px">반별 현황 · 지난주 기준</div>
     <div style="display:flex;flex-direction:column;gap:8px;padding:0 20px">${rows || `<div style="font:400 13px Pretendard;color:#b5b0a2;padding:8px 2px">아직 반이 없습니다. 설정에서 반을 추가하세요.</div>`}</div>
-    ${userShirtRows(users())}
-    ${shirtStats(D.concat(users()))}
+    ${shirtEventSection(users(), D.concat(users()))}
+    ${retreatEventSection(D, users())}
   </div>`;
 }
 
@@ -380,17 +492,22 @@ function classHomeView(scopeCls) {
     const picker = (shirtActive() && S.shirtPick === x.id) ? `<div style="display:flex;flex-wrap:wrap;gap:6px;padding:10px 0;border-bottom:1px solid #eeeade">
       ${SHIRT_SIZES.map(sz => `<span onclick="${h(async () => { await fsTry(stuRef(x.id).update({ shirt: sz === '미선택' ? FV().delete() : sz })); S.shirtPick = null; capture(); render(); })}" style="cursor:pointer;flex:none;font:600 12px Pretendard;padding:7px 12px;border-radius:99px;${(x.shirt || '미선택') === sz ? 'color:#f5f2ea;background:#211f1a' : 'color:#8a8578;border:1px solid #e8e4da'}">${sz}</span>`).join('')}
     </div>` : '';
+    const retreatBtn = retreatActive() ? `<span onclick="${h(e => { e.stopPropagation(); up(() => { S.retreatPick = S.retreatPick === x.id ? null : x.id; }); })}" style="cursor:pointer;font:600 10.5px Pretendard;flex:none;padding:3px 8px;border-radius:99px;${x.retreatAttendance ? 'color:#f5f2ea;background:#7a6234' : 'color:#7a6234;border:1px dashed #c8b78f;background:#fff'}">${esc(x.retreatAttendance || '\uC218\uB828\uD68C')}</span>` : '';
+    const retreatPicker = (retreatActive() && S.retreatPick === x.id) ? `<div style="display:flex;flex-wrap:wrap;gap:6px;padding:10px 0;border-bottom:1px solid #eeeade">
+      ${RETREAT_STUDENT_OPTIONS.map(status => `<span onclick="${h(async () => { await fsTry(stuRef(x.id).update({ retreatAttendance: status === '\uBBF8\uC120\uD0DD' ? FV().delete() : status })); S.retreatPick = null; capture(); render(); })}" style="cursor:pointer;flex:none;font:600 12px Pretendard;padding:7px 12px;border-radius:99px;${(x.retreatAttendance || '\uBBF8\uC120\uD0DD') === status ? 'color:#f5f2ea;background:#211f1a' : 'color:#8a8578;border:1px solid #e8e4da'}">${status}</span>`).join('')}
+    </div>` : '';
     return `<div onclick="${h(openStu(x.id))}" style="display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid #eeeade;cursor:pointer">
       <div style="flex:1;min-width:0;display:flex;align-items:center;gap:7px">
         <span style="font:600 15px Pretendard;color:#211f1a">${esc(x.name)}</span>
         ${t ? `<span style="${badgeStyle(t)}">${esc(t)}</span>` : ''}
         ${!vd ? `<span style="font:600 10.5px Pretendard;color:#a3552e;border:1px dashed #d8bfa8;padding:3px 8px;border-radius:99px;flex:none">미심방</span>` : ''}
         ${shirtBtn}
+        ${retreatBtn}
       </div>
       <div style="display:flex;gap:3px">${dots}</div>
       <div style="font:500 12px Pretendard;color:#8a8578;width:40px;text-align:right">${r === null ? (isNew(x) ? '신규' : '–') : r + '%'}</div>
       <div onclick="${vToggle}" title="이번 주 심방 완료 체크" style="flex:none;width:22px;height:22px;border-radius:7px;cursor:pointer;display:flex;align-items:center;justify-content:center;font:700 13px Pretendard;${vd ? 'background:#2e5d47;color:#fff' : 'background:#fff;border:1.5px solid #cfc9ba;color:transparent'}">${vd ? '✓' : ''}</div>
-    </div>${picker}`;
+    </div>${picker}${retreatPicker}`;
   }).join('');
 
   return `<div>
@@ -406,8 +523,8 @@ function classHomeView(scopeCls) {
     </div>
     ${adForm}
     <div style="display:flex;flex-direction:column;padding:0 20px">${rows || `<div style="font:400 13px Pretendard;color:#b5b0a2;padding:8px 2px">아직 학생이 없습니다. '+ 새친구'로 명단을 만들어보세요.</div>`}</div>
-    ${userShirtRows(users().filter(u => u.cls === scopeCls))}
-    ${shirtStats(list.concat(users().filter(u => u.cls === scopeCls)))}
+    ${shirtEventSection(users().filter(u => u.cls === scopeCls), list.concat(users().filter(u => u.cls === scopeCls)))}
+    ${retreatEventSection(list, users().filter(u => u.cls === scopeCls))}
   </div>`;
 }
 
@@ -562,6 +679,201 @@ function careView() {
   </div>`).join('');
 }
 
+// ══ 돌봄 허브 (심방·관심 통합)
+function careHubView() {
+  const changeMode = h(e => up(() => { S.careMode = e.target.value; S.vOpen = false; }));
+  return `<div>
+    <div style="padding:16px 20px 2px">
+      <label for="care-mode" style="display:block;font:600 12px Pretendard;color:#8a8578;margin-bottom:7px;letter-spacing:.04em">돌봄 보기</label>
+      <select id="care-mode" onchange="${changeMode}" style="${inputStyle};width:100%;font-weight:600;background:#fff">
+        <option value="visits" ${S.careMode === 'visits' ? 'selected' : ''}>심방 기록</option>
+        <option value="care" ${S.careMode === 'care' ? 'selected' : ''}>관심 학생</option>
+      </select>
+    </div>
+    ${S.careMode === 'care' ? careView() : visitsView()}
+  </div>`;
+}
+
+// ══ 게시판
+function boardView() {
+  const isPastor = S.me.role === 'pastor';
+  const stamp = ts => {
+    if (!ts) return '';
+    const d = new Date(ts), p = n => String(n).padStart(2, '0');
+    return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  };
+  const toggleLike = (collection, item) => h(async e => {
+    e && e.stopPropagation();
+    const liked = Array.isArray(item.likedBy) && item.likedBy.includes(S.me.email);
+    await fsTry(DB.collection(collection).doc(item.id).update({ likedBy: liked ? FV().arrayRemove(S.me.email) : FV().arrayUnion(S.me.email) }));
+  });
+  const submit = h(async () => {
+    capture();
+    const category = ['공지', '나눔'].includes(fv('board-category')) ? fv('board-category') : '공지';
+    const title = fv('board-title').trim().slice(0, 80);
+    const body = fv('board-body').trim().slice(0, 2000);
+    if (!title || !body) { flash('제목과 내용을 입력해주세요'); return; }
+    const editing = S.boardEditId && posts().find(x => x.id === S.boardEditId && x.authorEmail === S.me.email);
+    const action = editing
+      ? DB.collection('posts').doc(editing.id).update({ category, title, body, updatedTs: Date.now() })
+      : DB.collection('posts').add({ category, title, body, authorEmail: S.me.email, authorName: S.me.name, cls: S.me.role === 'pastor' ? '전체' : S.me.cls, likedBy: [], ts: Date.now() });
+    const okd = await fsTry(action);
+    if (okd) { S.boardOpen = false; S.boardEditId = null; clearF('board-'); flash(editing ? '게시글을 수정했어요' : '게시글을 등록했어요'); }
+  });
+  const form = S.boardOpen ? `<div style="margin:14px 20px 0;background:#fff;border:1px solid #cfc9ba;border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:9px;animation:sectionReveal .2s ease-out">
+    <div style="font:600 15px 'MaruBuri',serif;color:#211f1a">${S.boardEditId ? '게시글 수정' : '새 게시글'}</div>
+    <select id="board-category" style="${inputStyle}">
+      <option value="공지" ${fv('board-category') !== '나눔' ? 'selected' : ''}>공지사항</option>
+      <option value="나눔" ${fv('board-category') === '나눔' ? 'selected' : ''}>교사 나눔</option>
+    </select>
+    <input id="board-title" maxlength="80" value="${esc(fv('board-title'))}" placeholder="제목" style="${inputStyle}">
+    <textarea id="board-body" maxlength="2000" placeholder="함께 공유할 내용을 입력하세요" style="${inputStyle};min-height:120px;resize:vertical;line-height:1.55">${esc(fv('board-body'))}</textarea>
+    <div onclick="${submit}" style="${darkBtn}">${S.boardEditId ? '수정 저장' : '게시글 등록'}</div>
+  </div>` : '';
+
+  const selected = S.boardPostId ? posts().find(x => x.id === S.boardPostId) : null;
+  if (S.boardPostId && !selected) S.boardPostId = null;
+  if (selected) {
+    const postComments = comments().filter(x => x.postId === selected.id);
+    const canEdit = selected.authorEmail === S.me.email;
+    const canDelete = isPastor || canEdit;
+    const edit = canEdit ? `<span onclick="${h(() => up(() => { S.boardEditId = selected.id; S.boardOpen = true; S.boardPostId = null; F['board-category'] = selected.category || '공지'; F['board-title'] = selected.title || ''; F['board-body'] = selected.body || ''; }))}" style="font:600 12px Pretendard;color:#2e5d47;cursor:pointer">수정</span>` : '';
+    const del = canDelete ? `<span onclick="${h(async () => { if (!confirm('게시글과 댓글을 모두 삭제할까요?')) return; const batch = DB.batch(); batch.delete(DB.collection('posts').doc(selected.id)); postComments.forEach(c => batch.delete(DB.collection('comments').doc(c.id))); const okd = await fsTry(batch.commit()); if (okd) { S.boardPostId = null; flash('게시글을 삭제했어요'); } })}" style="font:600 12px Pretendard;color:#a3552e;cursor:pointer">삭제</span>` : '';
+    const commentSubmit = h(async () => {
+      capture();
+      const body = fv('comment-body').trim().slice(0, 1000);
+      if (!body) { flash('댓글 내용을 입력해주세요'); return; }
+      const okd = await fsTry(DB.collection('comments').add({ postId: selected.id, body, authorEmail: S.me.email, authorName: S.me.name, cls: S.me.role === 'pastor' ? '전체' : S.me.cls, likedBy: [], ts: Date.now() }));
+      if (okd) { clearF('comment-'); flash('댓글을 등록했어요'); }
+    });
+    const commentRows = postComments.map(comment => {
+      const liked = Array.isArray(comment.likedBy) && comment.likedBy.includes(S.me.email);
+      const canDelComment = isPastor || comment.authorEmail === S.me.email;
+      const commentDel = canDelComment ? `<span onclick="${h(async () => { if (!confirm('이 댓글을 삭제할까요?')) return; await fsTry(DB.collection('comments').doc(comment.id).delete()); })}" style="font:500 11px Pretendard;color:#a3552e;cursor:pointer">삭제</span>` : '';
+      return `<div style="padding:14px 2px;border-bottom:1px dashed #d8d3c8">
+        <div style="display:flex;align-items:center;gap:7px"><span style="font:700 13px Pretendard;color:#211f1a">${esc(comment.authorName || '작성자')}</span><span style="font:400 11px Pretendard;color:#b5b0a2">${esc(comment.cls || '')} · ${stamp(comment.ts)}</span><span style="margin-left:auto">${commentDel}</span></div>
+        <div style="font:400 13.5px Pretendard;color:#5c584c;line-height:1.65;margin-top:8px;white-space:pre-wrap;overflow-wrap:anywhere">${esc(comment.body)}</div>
+        <div onclick="${toggleLike('comments', comment)}" style="display:inline-flex;align-items:center;gap:5px;margin-top:10px;padding:5px 10px;border-radius:99px;cursor:pointer;font:600 11px Pretendard;color:${liked ? '#a3552e' : '#8a8578'};border:1px solid ${liked ? '#d8bfa8' : '#e8e4da'}">♡ 공감 ${(comment.likedBy || []).length}</div>
+      </div>`;
+    }).join('');
+    const postLiked = Array.isArray(selected.likedBy) && selected.likedBy.includes(S.me.email);
+    return `<div>
+      <div style="padding:14px 20px 0"><span onclick="${h(() => up(() => { S.boardPostId = null; clearF('comment-'); }))}" style="font:600 13px Pretendard;color:#2e5d47;cursor:pointer">‹ 목록으로</span></div>
+      <article style="margin:12px 20px 0;background:#fff;border:1px solid #d8cdb5;border-radius:14px;padding:17px 16px">
+        <div style="display:flex;align-items:center;gap:7px"><span style="font:700 10.5px Pretendard;color:${selected.category === '공지' ? '#7a6234' : '#2e5d47'};background:${selected.category === '공지' ? '#efe7d3' : '#e2eae2'};padding:4px 8px;border-radius:99px">${esc(selected.category === '나눔' ? '나눔' : '공지')}</span><span style="margin-left:auto;display:flex;gap:10px">${edit}${del}</span></div>
+        <h2 style="font:600 20px 'MaruBuri',serif;color:#211f1a;line-height:1.4;margin:12px 0 0">${esc(selected.title)}</h2>
+        <div style="font:400 11.5px Pretendard;color:#b5b0a2;margin-top:7px">${esc(selected.authorName || '작성자')} · ${esc(selected.cls || '')} · ${stamp(selected.ts)}${selected.updatedTs ? ' · 수정됨' : ''}</div>
+        <div style="font:400 14px Pretendard;color:#3f3c35;line-height:1.75;margin-top:20px;white-space:pre-wrap;overflow-wrap:anywhere">${esc(selected.body)}</div>
+        <div onclick="${toggleLike('posts', selected)}" style="display:inline-flex;align-items:center;gap:5px;margin-top:18px;padding:7px 12px;border-radius:99px;cursor:pointer;font:600 12px Pretendard;color:${postLiked ? '#a3552e' : '#8a8578'};border:1px solid ${postLiked ? '#d8bfa8' : '#e8e4da'}">♡ 공감 ${(selected.likedBy || []).length}</div>
+      </article>
+      <div style="margin:18px 20px 0">
+        <div style="font:600 15px 'MaruBuri',serif;color:#211f1a">댓글 ${postComments.length}</div>
+        <div style="margin-top:8px;background:#fff;border:1px solid #e8e4da;border-radius:14px;padding:0 14px">${commentRows || `<div style="font:400 13px Pretendard;color:#b5b0a2;padding:18px 2px">첫 댓글을 남겨보세요.</div>`}</div>
+        <div style="display:flex;gap:8px;margin-top:10px"><textarea id="comment-body" maxlength="1000" placeholder="댓글을 입력하세요" style="${inputStyle};flex:1;min-height:72px;resize:vertical">${esc(fv('comment-body'))}</textarea><div onclick="${commentSubmit}" style="${primaryBtn};width:62px;display:flex;align-items:center;justify-content:center">등록</div></div>
+      </div>
+    </div>`;
+  }
+
+  const rows = posts().map(post => {
+    const commentCount = comments().filter(x => x.postId === post.id).length;
+    return `<div onclick="${h(() => up(() => { S.boardPostId = post.id; S.boardOpen = false; }))}" style="display:flex;align-items:center;gap:10px;padding:14px 4px;border-bottom:1px solid #e8e4da;cursor:pointer">
+      <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:6px"><span style="font:700 10.5px Pretendard;color:${post.category === '공지' ? '#7a6234' : '#2e5d47'}">${post.category === '공지' ? '공지' : '나눔'}</span><span style="font:600 15px Pretendard;color:#211f1a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(post.title)}</span></div><div style="font:400 11.5px Pretendard;color:#8a8578;margin-top:6px">${esc(post.authorName || '작성자')} · ${esc(post.cls || '')} · ${stamp(post.ts)} · 공감 ${(post.likedBy || []).length}</div></div>
+      <div style="width:42px;height:48px;border-radius:10px;background:#f4f1ea;display:flex;flex-direction:column;align-items:center;justify-content:center;flex:none"><b style="font:700 14px Pretendard;color:#211f1a">${commentCount}</b><span style="font:500 10px Pretendard;color:#8a8578">댓글</span></div>
+    </div>`;
+  }).join('');
+  return `<div>
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px 0">
+      <div><div style="font:600 17px 'MaruBuri',serif;color:#211f1a">중고등부 게시판</div><div style="font:400 12px Pretendard;color:#8a8578;margin-top:3px">공지와 교사 나눔을 함께 확인하세요.</div></div>
+      <div onclick="${h(() => up(() => { S.boardOpen = !S.boardOpen; S.boardEditId = null; if (!S.boardOpen) clearF('board-'); }))}" style="font:600 13px Pretendard;color:#f5f2ea;background:#2e5d47;padding:8px 13px;border-radius:99px;cursor:pointer">${S.boardOpen ? '닫기' : '+ 글쓰기'}</div>
+    </div>
+    ${form}
+    <div style="margin:14px 20px 0;background:#fff;border:1px solid #e8e4da;border-radius:14px;padding:0 12px">${rows || `<div style="font:400 13px Pretendard;color:#b5b0a2;padding:18px 2px">아직 게시글이 없습니다. 첫 공지를 작성해보세요.</div>`}</div>
+  </div>`;
+}
+
+// ══ 공유 일정 캘린더
+function calendarView() {
+  const today = todayISO();
+  const month = S.calendarMonth || today.slice(0, 7);
+  if (!S.calendarMonth) S.calendarMonth = month;
+  if (!S.calendarDate || !S.calendarDate.startsWith(month)) S.calendarDate = month === today.slice(0, 7) ? today : month + '-01';
+  const [year, monthNum] = month.split('-').map(Number);
+  const firstDay = new Date(year, monthNum - 1, 1).getDay();
+  const daysInMonth = new Date(year, monthNum, 0).getDate();
+  const monthEvents = events().filter(x => String(x.date || '').startsWith(month));
+  const moveMonth = delta => h(() => up(() => {
+    const d = new Date(year, monthNum - 1 + delta, 1);
+    S.calendarMonth = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    S.calendarDate = S.calendarMonth + '-01'; S.eventOpen = false; S.eventEditId = null; S.eventPollEnabled = false; clearF('event-');
+  }));
+  const cells = [];
+  for (let i = 0; i < firstDay; i++) cells.push('<div style="min-height:54px"></div>');
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = month + '-' + String(day).padStart(2, '0');
+    const count = monthEvents.filter(x => x.date === date).length;
+    const selected = S.calendarDate === date, isToday = today === date;
+    cells.push(`<div onclick="${h(() => up(() => { S.calendarDate = date; S.eventOpen = false; S.eventEditId = null; S.eventPollEnabled = false; clearF('event-'); }))}" style="min-height:54px;padding:7px 4px;border-radius:10px;cursor:pointer;text-align:center;${selected ? 'background:#2e5d47;color:#fff' : 'background:#fff;color:#211f1a'};${isToday && !selected ? 'box-shadow:inset 0 0 0 1.5px #7a6234' : ''}">
+      <div style="font:600 12px Pretendard">${day}</div>
+      ${count ? `<div style="display:flex;justify-content:center;gap:2px;margin-top:7px">${Array.from({ length: Math.min(count, 3) }, () => `<span style="width:4px;height:4px;border-radius:50%;background:${selected ? '#f5f2ea' : '#a3552e'}"></span>`).join('')}</div>` : ''}
+    </div>`);
+  }
+  const selectedEvents = events().filter(x => x.date === S.calendarDate).sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
+  const submit = h(async () => {
+    capture();
+    const title = fv('event-title').trim().slice(0, 80);
+    const date = fv('event-date') || S.calendarDate;
+    const time = fv('event-time').slice(0, 5);
+    const note = fv('event-note').trim().slice(0, 1000);
+    if (!title || !date) { flash('일정 제목과 날짜를 입력해주세요'); return; }
+    const editing = S.eventEditId && events().find(x => x.id === S.eventEditId && x.authorEmail === S.me.email);
+    const payload = { title, date, time, note, pollEnabled: S.eventPollEnabled };
+    let action;
+    if (editing && editing.pollEnabled && !S.eventPollEnabled) {
+      const batch = DB.batch();
+      batch.update(DB.collection('events').doc(editing.id), Object.assign({}, payload, { updatedTs: Date.now() }));
+      eventVotes().filter(v => v.eventId === editing.id).forEach(v => batch.delete(DB.collection('eventVotes').doc(v.id)));
+      action = batch.commit();
+    } else if (editing) action = DB.collection('events').doc(editing.id).update(Object.assign({}, payload, { updatedTs: Date.now() }));
+    else action = DB.collection('events').add(Object.assign({}, payload, { authorEmail: S.me.email, authorName: S.me.name, ts: Date.now() }));
+    const okd = await fsTry(action);
+    if (okd) { S.calendarMonth = date.slice(0, 7); S.calendarDate = date; S.eventOpen = false; S.eventEditId = null; S.eventPollEnabled = false; clearF('event-'); flash(editing ? '일정을 수정했어요' : '일정을 등록했어요'); }
+  });
+  const form = S.eventOpen ? `<div style="margin-top:10px;background:#fff;border:1px solid #cfc9ba;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:8px;animation:sectionReveal .2s ease-out">
+    <div style="font:600 14px 'MaruBuri',serif;color:#211f1a">${S.eventEditId ? '일정 수정' : '새 일정'}</div>
+    <input id="event-title" maxlength="80" value="${esc(fv('event-title'))}" placeholder="일정 제목" style="${inputStyle}">
+    <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:8px"><input id="event-date" type="date" value="${esc(fv('event-date') || S.calendarDate)}" style="${inputStyle}"><input id="event-time" type="time" value="${esc(fv('event-time'))}" style="${inputStyle}"></div>
+    <textarea id="event-note" maxlength="1000" placeholder="장소, 준비물, 안내사항 등" style="${inputStyle};min-height:74px;resize:vertical">${esc(fv('event-note'))}</textarea>
+    <div onclick="${h(() => up(() => { S.eventPollEnabled = !S.eventPollEnabled; }))}" style="display:flex;align-items:center;gap:9px;padding:10px 11px;border:1px solid ${S.eventPollEnabled ? '#9db8a8' : '#e8e4da'};border-radius:10px;cursor:pointer;background:${S.eventPollEnabled ? '#f1f6f1' : '#faf8f3'}"><span style="width:20px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;font:700 12px Pretendard;${S.eventPollEnabled ? 'background:#2e5d47;color:#fff' : 'border:1.5px solid #cfc9ba;color:transparent'}">✓</span><div><div style="font:600 13px Pretendard;color:#211f1a">참석 여부 투표 사용</div><div style="font:400 11px Pretendard;color:#8a8578;margin-top:2px">참석·불참·미정으로 응답을 받습니다.</div></div></div>
+    <div onclick="${submit}" style="${darkBtn}">${S.eventEditId ? '수정 저장' : '일정 등록'}</div>
+  </div>` : '';
+  const eventRows = selectedEvents.map(event => {
+    const canEdit = event.authorEmail === S.me.email;
+    const canDelete = S.me.role === 'pastor' || canEdit;
+    const edit = canEdit ? `<span onclick="${h(() => up(() => { S.eventEditId = event.id; S.eventOpen = true; S.eventPollEnabled = !!event.pollEnabled; F['event-title'] = event.title || ''; F['event-date'] = event.date || S.calendarDate; F['event-time'] = event.time || ''; F['event-note'] = event.note || ''; }))}" style="font:500 11px Pretendard;color:#2e5d47;cursor:pointer">수정</span>` : '';
+    const del = canDelete ? `<span onclick="${h(async () => { if (!confirm('이 일정과 투표 결과를 삭제할까요?')) return; const batch = DB.batch(); batch.delete(DB.collection('events').doc(event.id)); eventVotes().filter(v => v.eventId === event.id).forEach(v => batch.delete(DB.collection('eventVotes').doc(v.id))); const okd = await fsTry(batch.commit()); if (okd) flash('일정을 삭제했어요'); })}" style="font:500 11px Pretendard;color:#a3552e;cursor:pointer">삭제</span>` : '';
+    const votes = eventVotes().filter(v => v.eventId === event.id);
+    const myVote = votes.find(v => v.userEmail === S.me.email);
+    const vote = status => h(async () => {
+      const ref = DB.collection('eventVotes').doc(event.id + '--' + encodeURIComponent(S.me.email));
+      const okd = await fsTry(myVote && myVote.status === status ? ref.delete() : ref.set({ eventId: event.id, userEmail: S.me.email, userName: S.me.name, status, ts: Date.now() }));
+      if (okd) flash(myVote && myVote.status === status ? '응답을 취소했어요' : status + '으로 응답했어요');
+    });
+    const voteBox = event.pollEnabled ? `<div style="margin-top:11px;padding-top:10px;border-top:1px solid #eeeade"><div style="display:flex;align-items:center;justify-content:space-between"><span style="font:600 11px Pretendard;color:#7a6234">참석 여부 · ${votes.length}명 응답</span></div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:7px">${['참석','불참','미정'].map(status => { const count = votes.filter(v => v.status === status).length; const on = myVote && myVote.status === status; return `<div onclick="${vote(status)}" style="text-align:center;padding:8px 4px;border-radius:9px;cursor:pointer;font:600 11.5px Pretendard;${on ? 'background:#2e5d47;color:#fff' : 'background:#faf8f3;color:#6d6a5f;border:1px solid #e8e4da'}">${status} ${count}</div>`; }).join('')}</div></div>` : '';
+    return `<div style="background:#fff;border:1px solid #e8e4da;border-radius:12px;padding:13px 14px">
+      <div style="display:flex;align-items:center;gap:8px"><span style="font:700 12px Pretendard;color:#7a6234;min-width:38px">${esc(event.time || '종일')}</span><span style="font:600 14px Pretendard;color:#211f1a;flex:1">${esc(event.title)}</span>${edit}${del}</div>
+      ${event.note ? `<div style="font:400 12.5px Pretendard;color:#6d6a5f;line-height:1.55;margin-top:7px;white-space:pre-wrap">${esc(event.note)}</div>` : ''}
+      <div style="font:400 11px Pretendard;color:#b5b0a2;margin-top:7px">${esc(event.authorName || '작성자')}${event.updatedTs ? ' · 수정됨' : ''}</div>${voteBox}
+    </div>`;
+  }).join('');
+  return `<div style="padding:16px 20px 0">
+    <div style="display:flex;align-items:center;justify-content:space-between"><span onclick="${moveMonth(-1)}" style="font:700 20px Pretendard;color:#2e5d47;cursor:pointer;padding:4px 10px">‹</span><div style="text-align:center"><div style="font:600 19px 'MaruBuri',serif;color:#211f1a">${year}년 ${monthNum}월</div><div style="font:400 11px Pretendard;color:#8a8578;margin-top:2px">공유 일정 ${monthEvents.length}건</div></div><span onclick="${moveMonth(1)}" style="font:700 20px Pretendard;color:#2e5d47;cursor:pointer;padding:4px 10px">›</span></div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:14px">${['일','월','화','수','목','금','토'].map((w, i) => `<div style="text-align:center;font:600 10.5px Pretendard;color:${i === 0 ? '#a3552e' : i === 6 ? '#4c6b82' : '#8a8578'};padding-bottom:3px">${w}</div>`).join('')}${cells.join('')}</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:18px"><div><div style="font:600 15px 'MaruBuri',serif;color:#211f1a">${md(S.calendarDate)} 일정</div><div style="font:400 11px Pretendard;color:#8a8578;margin-top:2px">${selectedEvents.length}건</div></div><div onclick="${h(() => up(() => { S.eventOpen = !S.eventOpen; S.eventEditId = null; S.eventPollEnabled = false; if (!S.eventOpen) clearF('event-'); }))}" style="font:600 12px Pretendard;color:#f5f2ea;background:#2e5d47;padding:8px 12px;border-radius:99px;cursor:pointer">${S.eventOpen ? '닫기' : '+ 일정'}</div></div>
+    ${form}
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">${eventRows || `<div style="font:400 13px Pretendard;color:#b5b0a2;padding:14px 2px">선택한 날짜에 등록된 일정이 없습니다.</div>`}</div>
+  </div>`;
+}
+
 // ══ 학생 상세
 function studentView(st) {
   const CUR = curWeek(), PAST = pastWeeks();
@@ -682,7 +994,7 @@ function studentView(st) {
     </div>
     <div style="padding:20px 20px 6px;display:flex;justify-content:space-between;align-items:baseline">
       <span style="font:600 12px Pretendard;color:#8a8578;letter-spacing:.06em">심방·상담 기록</span>
-      <span onclick="${h(() => up(() => { S.sid = null; S.screen = 'visits'; S.vOpen = true; F['v-stu'] = st.id; }))}" style="font:600 12px Pretendard;color:#2e5d47;cursor:pointer">+ 기록 추가</span>
+      <span onclick="${h(() => up(() => { S.sid = null; S.screen = 'carehub'; S.careMode = 'visits'; S.vOpen = true; F['v-stu'] = st.id; }))}" style="font:600 12px Pretendard;color:#2e5d47;cursor:pointer">+ 기록 추가</span>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px;padding:0 20px">
       ${vHtml || `<div style="font:400 13px Pretendard;color:#b5b0a2;padding:6px 2px">아직 기록이 없어요.</div>`}
@@ -829,8 +1141,11 @@ function settingsView() {
 
 // ══ 메인 렌더
 function render() {
-  H.length = 0;
   const el = document.getElementById('app');
+  const previousScroll = document.getElementById('app-scroll');
+  const previousScrollTop = previousScroll ? previousScroll.scrollTop : 0;
+  const previousViewKey = el.dataset.viewKey || '';
+  H.length = 0;
   if (configMissing()) { el.innerHTML = setupView(); return; }
   if (!S.loaded) { el.innerHTML = '<div style="text-align:center;padding:60px;font:500 14px Pretendard;color:#8a8578">불러오는 중…</div>'; return; }
   if (!S.me) { el.innerHTML = loginView(); return; }
@@ -842,14 +1157,16 @@ function render() {
 
   let body = '';
   const screen = st ? 'student' : S.screen;
+  const viewKey = screen + ':' + (st ? st.id : scopeCls) + (screen === 'board' ? ':' + S.communityMode + ':' + (S.boardPostId || S.calendarMonth || 'list') : '') + (screen === 'carehub' ? ':' + S.careMode : '');
+  const nextScrollTop = scrollTarget(previousViewKey, viewKey, previousScrollTop, S.scrollPositions);
   if (screen === 'student') body = studentView(st);
   else if (screen === 'home') body = (isPastor && S.cls === '전체') ? overviewView() : classHomeView(scopeCls);
   else if (screen === 'attend') body = (isPastor && S.cls === '전체') ? attendPickView() : attendView(scopeCls);
-  else if (screen === 'visits') body = visitsView();
-  else if (screen === 'care') body = careView();
+  else if (screen === 'carehub') body = careHubView();
+  else if (screen === 'board') body = S.communityMode === 'calendar' ? calendarView() : boardView();
   else if (screen === 'settings') body = settingsView();
 
-  const NAV = [['home', '홈'], ['attend', '출석'], ['visits', '심방'], ['care', '관심'], ['settings', '설정']];
+  const NAV = [['home', '홈'], ['attend', '출석'], ['carehub', '돌봄'], ['board', '게시판']];
   const nav = NAV.map(([k, label]) => {
     const on = !st && S.screen === k;
     return `<div onclick="${h(() => up(() => { S.screen = k; S.sid = null; }))}" style="text-align:center;cursor:pointer">
@@ -858,14 +1175,20 @@ function render() {
     </div>`;
   }).join('');
 
-  el.innerHTML = `<div style="width:100%;max-width:390px;margin:0 auto;min-height:100vh;overflow-x:hidden;background:#faf8f3;display:flex;flex-direction:column;box-shadow:0 0 40px rgba(33,31,26,.15);position:relative">
+  el.innerHTML = `<div style="width:100%;max-width:390px;margin:0 auto;height:100vh;height:100dvh;overflow:hidden;background:#faf8f3;display:flex;flex-direction:column;box-shadow:0 0 40px rgba(33,31,26,.15);position:relative">
     ${headerView()}
-    <div style="flex:1;overflow-y:auto;padding-bottom:16px">${body}</div>
-    ${S.toast ? `<div style="position:sticky;bottom:74px;display:flex;justify-content:center;pointer-events:none;z-index:5">
+    <div id="app-scroll" onscroll="onAppScroll(this)" style="flex:1;overflow-y:auto;padding-bottom:76px;overflow-anchor:none">${body}</div>
+    ${S.toast ? `<div style="position:absolute;left:0;right:0;bottom:74px;display:flex;justify-content:center;pointer-events:none;z-index:5">
       <div style="background:#211f1a;color:#f5f2ea;font:500 13px Pretendard;padding:10px 18px;border-radius:99px;box-shadow:0 4px 14px rgba(33,31,26,.25)">${esc(S.toast)}</div>
     </div>` : ''}
-    <div style="position:sticky;bottom:0;background:#faf8f3;border-top:1px solid #e8e4da;display:grid;grid-template-columns:repeat(5,1fr);padding:10px 0 14px;z-index:4">${nav}</div>
+    <div id="bottom-nav" style="position:absolute;left:0;right:0;bottom:0;background:rgba(250,248,243,.96);backdrop-filter:blur(12px);border-top:1px solid #e8e4da;display:grid;grid-template-columns:repeat(4,1fr);padding:10px 0 14px;z-index:4;transform:translateY(0);transition:transform .28s cubic-bezier(.22,1,.36,1);will-change:transform">${nav}</div>
   </div>`;
+  el.dataset.viewKey = viewKey;
+  const nextScroll = document.getElementById('app-scroll');
+  if (nextScroll && nextScrollTop) {
+    const max = Math.max(0, nextScroll.scrollHeight - nextScroll.clientHeight);
+    nextScroll.scrollTop = Math.min(nextScrollTop, max);
+  }
 }
 
 render();
