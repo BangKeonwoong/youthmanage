@@ -15,6 +15,11 @@ let S = {
   retreatPick: null, retreatPickU: null, shirtStatsOpen: false, retreatStatsOpen: false,
   lastScrollTop: 0, scrollPositions: {}
 };
+const NAV_STATE_FIELDS = ['screen', 'sid', 'cls', 'communityMode', 'boardPostId', 'calendarMonth', 'calendarDate', 'careMode', 'attendanceTab'];
+let navigationDepth = 0;
+let edgeSwipe = null;
+let edgeSwipeBackTimer = null;
+let edgeSwipeResetTimer = null;
 window.H = [];
 const h = fn => { H.push(fn); return 'H[' + (H.length - 1) + '](event)'; };
 const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -188,9 +193,10 @@ function initFirebase() {
   DB = firebase.firestore();
   AUTH.onAuthStateChanged(async u => {
     const epoch = ++authEpoch;
+    const previousUser = S.me;
     detach();
     S.me = null; resetInitialDataLoad();
-    if (!u) { S.loaded = true; render(); return; }
+    if (!u) { if (previousUser) resetNavigationHistory(); S.loaded = true; render(); return; }
     S.loaded = false; render();
     try { await afterLogin(u, epoch); }
     catch (e) {
@@ -229,7 +235,9 @@ async function afterLogin(u, epoch) {
   resetInitialDataLoad();
   startInitialDataLoadTimer();
   S.cls = info.role === 'pastor' ? '전체' : info.cls;
-  S.screen = 'home'; S.sid = null; S.loginErr = ''; S.loaded = true; F = {};
+  S.screen = 'home'; S.sid = null; S.boardPostId = null; S.boardOpen = false; S.boardEditId = null;
+  S.eventOpen = false; S.eventEditId = null; S.loginErr = ''; S.loaded = true; F = {};
+  initNavigationHistory();
   attach(epoch);
   render();
 }
@@ -319,6 +327,182 @@ const FV = () => firebase.firestore.FieldValue;
 let toastT = null;
 function flash(msg) { S.toast = msg; render(); clearTimeout(toastT); toastT = setTimeout(() => { S.toast = ''; capture(); render(); }, 1800); }
 function up(mut) { capture(); mut && mut(); render(); }
+
+// ── 앱 화면 이동·뒤로가기
+function navigationState() {
+  const state = {};
+  NAV_STATE_FIELDS.forEach(key => { state[key] = S[key]; });
+  return state;
+}
+function navigationKey(state) { return JSON.stringify(state || navigationState()); }
+function historySupported() {
+  return !!(window.history && window.history.pushState && window.history.replaceState);
+}
+function navigationHistoryState() {
+  return { youthApp: true, owner: S.me && S.me.email, depth: navigationDepth, view: navigationState() };
+}
+function applyNavigationState(view) {
+  if (!view) return;
+  NAV_STATE_FIELDS.forEach(key => { if (Object.prototype.hasOwnProperty.call(view, key)) S[key] = view[key]; });
+  S.edOn = false; S.delArm = false; S.boardOpen = false; S.boardEditId = null;
+  S.eventOpen = false; S.eventEditId = null; S.eventPollEnabled = false;
+  S.vOpen = false; S.adOpen = false; clearF('comment-'); clearF('board-'); clearF('event-');
+}
+function initNavigationHistory() {
+  if (!S.me || !historySupported()) { navigationDepth = 0; return; }
+  const current = window.history.state;
+  if (current && current.youthApp && current.owner === S.me.email && current.view) {
+    navigationDepth = Math.max(0, Number(current.depth) || 0);
+    applyNavigationState(current.view);
+    return;
+  }
+  navigationDepth = 0;
+  window.history.replaceState(navigationHistoryState(), '', window.location.href);
+}
+function resetNavigationHistory() {
+  navigationDepth = 0;
+  if (historySupported() && window.history.state && window.history.state.youthApp) {
+    window.history.replaceState(null, '', window.location.href);
+  }
+}
+function navigate(mut) {
+  capture();
+  const before = navigationKey();
+  mut && mut();
+  if (navigationKey() !== before && S.me && historySupported()) {
+    navigationDepth += 1;
+    window.history.pushState(navigationHistoryState(), '', window.location.href);
+  }
+  render();
+}
+function closeTransientView() {
+  if (S.edOn) { S.edOn = false; clearF('ed-'); return true; }
+  if (S.delArm) { S.delArm = false; return true; }
+  if (S.boardOpen) {
+    const editingPostId = S.boardEditId;
+    S.boardOpen = false; S.boardEditId = null;
+    if (editingPostId) S.boardPostId = editingPostId;
+    clearF('board-'); return true;
+  }
+  if (S.eventOpen) { S.eventOpen = false; S.eventEditId = null; S.eventPollEnabled = false; clearF('event-'); return true; }
+  if (S.vOpen) { S.vOpen = false; clearF('v-'); return true; }
+  if (S.adOpen) { S.adOpen = false; return true; }
+  if (S.shirtPick || S.shirtPickU || S.retreatPick || S.retreatPickU) {
+    S.shirtPick = null; S.shirtPickU = null; S.retreatPick = null; S.retreatPickU = null; return true;
+  }
+  return false;
+}
+function fallbackBack() {
+  if (S.sid) { S.sid = null; S.edOn = false; S.delArm = false; clearF('note-'); return true; }
+  if (S.boardPostId) { S.boardPostId = null; clearF('comment-'); return true; }
+  if (S.screen !== 'home') { S.screen = 'home'; S.sid = null; return true; }
+  if (S.me && S.me.role === 'pastor' && S.cls !== '전체') { S.cls = '전체'; return true; }
+  return false;
+}
+function canAppBack() {
+  return !!(S.edOn || S.delArm || S.boardOpen || S.eventOpen || S.vOpen || S.adOpen ||
+    S.shirtPick || S.shirtPickU || S.retreatPick || S.retreatPickU || navigationDepth > 0 ||
+    S.sid || S.boardPostId || S.screen !== 'home' || (S.me && S.me.role === 'pastor' && S.cls !== '전체'));
+}
+function appBack(fallbackMut) {
+  capture();
+  if (!fallbackMut && closeTransientView()) { render(); return true; }
+  if (navigationDepth > 0 && historySupported()) { window.history.back(); return true; }
+  const changed = fallbackMut ? (fallbackMut(), true) : fallbackBack();
+  if (changed) render();
+  return changed;
+}
+
+// iOS 홈 화면 앱은 Safari의 네이티브 가장자리 탐색 UI가 없을 수 있어 앱 내부 폴백을 제공한다.
+function isStandaloneApp() {
+  const standalone = typeof navigator !== 'undefined' && navigator.standalone === true;
+  const displayMode = !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  return standalone || displayMode;
+}
+function swipeIgnoredTarget(target) {
+  let node = target;
+  while (node && node !== document) {
+    const tag = String(node.tagName || '').toUpperCase();
+    if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(tag) || node.isContentEditable) return true;
+    if (Number(node.scrollWidth) > Number(node.clientWidth) + 2) return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+function edgeSwipeThreshold(width) { return Math.min(96, Math.max(72, Number(width || 0) * 0.23)); }
+function edgeSwipeCompletes(startX, dx, dy, width, elapsed) {
+  const horizontal = dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.15;
+  const fast = elapsed > 0 && dx / elapsed > 0.55 && dx >= 48;
+  return startX <= 28 && horizontal && Math.abs(dy) <= 80 && (dx >= edgeSwipeThreshold(width) || fast);
+}
+function swipeShell() { return document.querySelector ? document.querySelector('.app-shell') : null; }
+function resetSwipeVisual(immediate) {
+  const shell = swipeShell();
+  if (!shell) return;
+  shell.style.transition = immediate ? 'none' : 'transform .18s cubic-bezier(.22,1,.36,1), box-shadow .18s ease';
+  shell.style.transform = 'translate3d(0,0,0)'; shell.style.boxShadow = '';
+  shell.style.willChange = '';
+}
+function reducedMotion() { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+function onEdgeTouchStart(event) {
+  if (!isStandaloneApp() || !canAppBack() || !event.touches || event.touches.length !== 1 || swipeIgnoredTarget(event.target)) return;
+  const touch = event.touches[0];
+  if (touch.clientX > 28) return;
+  if (window.visualViewport && window.visualViewport.scale > 1.01) return;
+  edgeSwipe = { startX: touch.clientX, startY: touch.clientY, x: touch.clientX, y: touch.clientY, startedAt: Date.now(), direction: '' };
+}
+function onEdgeTouchMove(event) {
+  if (!edgeSwipe) return;
+  if (!event.touches || event.touches.length !== 1) { edgeSwipe = null; resetSwipeVisual(false); return; }
+  const touch = event.touches[0], dx = touch.clientX - edgeSwipe.startX, dy = touch.clientY - edgeSwipe.startY;
+  edgeSwipe.x = touch.clientX; edgeSwipe.y = touch.clientY;
+  if (!edgeSwipe.direction && Math.max(Math.abs(dx), Math.abs(dy)) >= 8) {
+    edgeSwipe.direction = dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.15 ? 'back' : 'scroll';
+  }
+  if (edgeSwipe.direction !== 'back') return;
+  event.preventDefault();
+  const shell = swipeShell();
+  if (!shell || reducedMotion()) return;
+  const width = window.innerWidth || document.documentElement.clientWidth || 390;
+  const offset = Math.min(Math.max(0, dx), width * 0.82);
+  shell.style.transition = 'none'; shell.style.willChange = 'transform';
+  shell.style.transform = 'translate3d(' + offset + 'px,0,0)';
+  shell.style.boxShadow = '-12px 0 30px rgba(33,31,26,.18)';
+}
+function finishEdgeSwipe(event, cancelled) {
+  if (!edgeSwipe) return;
+  const swipe = edgeSwipe; edgeSwipe = null;
+  const touch = event && event.changedTouches && event.changedTouches[0];
+  const endX = touch ? touch.clientX : swipe.x, endY = touch ? touch.clientY : swipe.y;
+  const width = window.innerWidth || (document.documentElement && document.documentElement.clientWidth) || 390;
+  const complete = !cancelled && swipe.direction === 'back' && edgeSwipeCompletes(swipe.startX, endX - swipe.startX, endY - swipe.startY, width, Date.now() - swipe.startedAt);
+  if (!complete) { resetSwipeVisual(false); return; }
+  const shell = swipeShell();
+  if (shell && !reducedMotion()) {
+    shell.style.transition = 'transform .16s cubic-bezier(.4,0,1,1)';
+    shell.style.transform = 'translate3d(' + width + 'px,0,0)';
+    clearTimeout(edgeSwipeBackTimer); clearTimeout(edgeSwipeResetTimer);
+    edgeSwipeBackTimer = setTimeout(() => { edgeSwipeBackTimer = null; appBack(); }, 110);
+    edgeSwipeResetTimer = setTimeout(() => { edgeSwipeResetTimer = null; resetSwipeVisual(false); }, 520);
+  } else appBack();
+}
+function onNavigationPop(event) {
+  clearTimeout(edgeSwipeBackTimer); edgeSwipeBackTimer = null;
+  clearTimeout(edgeSwipeResetTimer); edgeSwipeResetTimer = null;
+  edgeSwipe = null; resetSwipeVisual(true);
+  const state = event && event.state;
+  if (!S.me || !state || !state.youthApp || state.owner !== S.me.email || !state.view) return;
+  navigationDepth = Math.max(0, Number(state.depth) || 0);
+  capture(); applyNavigationState(state.view); render();
+}
+function installEdgeSwipeBack() {
+  if (!document.addEventListener) return;
+  document.addEventListener('touchstart', onEdgeTouchStart, { passive: true });
+  document.addEventListener('touchmove', onEdgeTouchMove, { passive: false });
+  document.addEventListener('touchend', event => finishEdgeSwipe(event, false), { passive: true });
+  document.addEventListener('touchcancel', event => finishEdgeSwipe(event, true), { passive: true });
+  if (window.addEventListener) window.addEventListener('popstate', onNavigationPop);
+}
 function onAppScroll(el) {
   const current = Math.max(0, el.scrollTop);
   const delta = current - S.lastScrollTop;
@@ -332,7 +516,7 @@ function scrollTarget(previousKey, nextKey, previousTop, positions) {
   if (previousKey) positions[previousKey] = previousTop;
   return previousKey === nextKey ? previousTop : (positions[nextKey] || 0);
 }
-function openStu(id) { return () => up(() => { S.sid = id; S.edOn = false; S.delArm = false; clearF('note-'); }); }
+function openStu(id) { return () => navigate(() => { S.sid = id; S.edOn = false; S.delArm = false; clearF('note-'); }); }
 function curStu() { return S.sid ? students().find(x => x.id === S.sid) : null; }
 
 // ── 공통 스타일 조각
@@ -500,17 +684,17 @@ function headerView() {
   else if (S.cls === '전체') { title = '중고등부'; subtitle = classes().length + '개 반 · 재적 ' + students().length + '명'; }
   else { title = S.cls + '반'; subtitle = '담당 ' + teacherOf(S.cls) + ' 선생님 · 재적 ' + stuOf(S.cls).length + '명'; }
   const chips = isPastor && !boardScreen ? `<div style="display:flex;gap:7px;overflow-x:auto;padding-bottom:12px;scrollbar-width:none">
-    ${['전체'].concat(classes()).map(c => `<div onclick="${h(() => up(() => { S.cls = c; S.sid = null; }))}" style="flex:none;font:600 13px Pretendard;padding:7px 13px;border-radius:99px;cursor:pointer;${S.cls === c ? 'background:#211f1a;color:#f5f2ea' : 'background:#fff;color:#6d6a5f;border:1px solid #e8e4da'}">${esc(c)}</div>`).join('')}
+    ${['전체'].concat(classes()).map(c => `<div onclick="${h(() => navigate(() => { S.cls = c; S.sid = null; }))}" style="flex:none;font:600 13px Pretendard;padding:7px 13px;border-radius:99px;cursor:pointer;${S.cls === c ? 'background:#211f1a;color:#f5f2ea' : 'background:#fff;color:#6d6a5f;border:1px solid #e8e4da'}">${esc(c)}</div>`).join('')}
   </div>` : '';
   const communityTabs = boardScreen ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;margin-bottom:12px;background:#eeeade;border-radius:12px">
-    ${[['board', '게시판'], ['calendar', '일정']].map(([key, label]) => `<div onclick="${h(() => up(() => { S.communityMode = key; S.boardPostId = null; S.boardOpen = false; S.eventOpen = false; S.eventEditId = null; S.eventPollEnabled = false; }))}" style="text-align:center;padding:8px;border-radius:9px;cursor:pointer;font:700 13px Pretendard;${S.communityMode === key ? 'background:#fff;color:#211f1a;box-shadow:0 1px 4px rgba(33,31,26,.12)' : 'color:#8a8578'}">${label}</div>`).join('')}
+    ${[['board', '게시판'], ['calendar', '일정']].map(([key, label]) => `<div onclick="${h(() => navigate(() => { S.communityMode = key; S.boardPostId = null; S.boardOpen = false; S.eventOpen = false; S.eventEditId = null; S.eventPollEnabled = false; }))}" style="text-align:center;padding:8px;border-radius:9px;cursor:pointer;font:700 13px Pretendard;${S.communityMode === key ? 'background:#fff;color:#211f1a;box-shadow:0 1px 4px rgba(33,31,26,.12)' : 'color:#8a8578'}">${label}</div>`).join('')}
   </div>` : '';
   return `<div style="padding:16px 20px 0;border-bottom:1px solid #e8e4da;background:#faf8f3">
     <div style="display:flex;justify-content:space-between;align-items:center">
       <div style="font:600 12px Pretendard;color:#8a8578;letter-spacing:.04em">${todayLabel()}</div>
       <div style="display:flex;align-items:center;gap:6px">
         <div style="font:600 12px Pretendard;color:#2e5d47;border:1px solid #cfc9ba;padding:5px 12px;border-radius:99px;background:#fff">${esc(S.me.name)} · ${isPastor ? '교역자' : '교사'}</div>
-        <div onclick="${h(() => up(() => { S.screen = 'settings'; S.sid = null; }))}" role="button" aria-label="설정 열기" title="설정" style="width:29px;height:29px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font:600 15px Pretendard;${S.screen === 'settings' ? 'background:#2e5d47;color:#fff' : 'background:#fff;color:#6d6a5f;border:1px solid #cfc9ba'}">⚙</div>
+        <div onclick="${h(() => navigate(() => { S.screen = 'settings'; S.sid = null; }))}" role="button" aria-label="설정 열기" title="설정" style="width:29px;height:29px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;font:600 15px Pretendard;${S.screen === 'settings' ? 'background:#2e5d47;color:#fff' : 'background:#fff;color:#6d6a5f;border:1px solid #cfc9ba'}">⚙</div>
       </div>
     </div>
     <div style="font:600 26px 'MaruBuri',serif;color:#211f1a;margin-top:8px">${esc(title)}</div>
@@ -531,7 +715,7 @@ function overviewView() {
     const att = list.filter(x => x.att && (x.att[LW] === 'P' || x.att[LW] === 'L')).length;
     const rt = Math.round(att / (list.length || 1) * 100);
     const careN = list.filter(x => careType(x)).length;
-    return `<div onclick="${h(() => up(() => { S.cls = c; }))}" style="display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #e8e4da;border-radius:12px;padding:13px 14px;cursor:pointer">
+    return `<div onclick="${h(() => navigate(() => { S.cls = c; }))}" style="display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #e8e4da;border-radius:12px;padding:13px 14px;cursor:pointer">
       <div style="width:44px;font:600 15px 'MaruBuri',serif;color:#211f1a">${esc(c)}</div>
       <div style="flex:1;min-width:0">
         <div style="font:500 12px Pretendard;color:#8a8578">${esc(teacherOf(c))} · ${list.length}명</div>
@@ -658,7 +842,7 @@ function attendPickView() {
     const stats = classAttendanceStats(c);
     const attendanceDone = stats.total > 0 && stats.checked === stats.total;
     const visitDone = stats.total > 0 && stats.visited === stats.total;
-    return `<div onclick="${h(() => up(() => { S.cls = c; }))}" style="background:#fff;border:1px solid #e8e4da;border-radius:12px;padding:16px 14px;cursor:pointer">
+    return `<div onclick="${h(() => navigate(() => { S.cls = c; }))}" style="background:#fff;border:1px solid #e8e4da;border-radius:12px;padding:16px 14px;cursor:pointer">
       <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px"><div style="font:600 17px 'MaruBuri',serif;color:#211f1a">${esc(c)}</div><div style="font:500 11px Pretendard;color:#8a8578">${esc(teacherOf(c))}</div></div>
       <div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;font:600 12px Pretendard;color:${attendanceDone ? '#2e5d47' : '#6d6a5f'}"><span>출석 체크</span><span>${stats.checked}/${stats.total}${attendanceDone ? ' ✓' : ''}</span></div>
       <div style="height:4px;background:#eeeade;border-radius:99px;margin-top:5px;overflow:hidden"><div style="width:${Math.round(stats.checked / (stats.total || 1) * 100)}%;height:100%;background:#2e5d47;border-radius:99px"></div></div>
@@ -911,7 +1095,7 @@ function boardView() {
     }).join('');
     const postLiked = Array.isArray(selected.likedBy) && selected.likedBy.includes(S.me.email);
     return `<div>
-      <div style="padding:14px 20px 0"><span onclick="${h(() => up(() => { S.boardPostId = null; clearF('comment-'); }))}" style="font:600 13px Pretendard;color:#2e5d47;cursor:pointer">‹ 목록으로</span></div>
+      <div style="padding:14px 20px 0"><span onclick="${h(() => appBack(() => { S.boardPostId = null; clearF('comment-'); }))}" style="font:600 13px Pretendard;color:#2e5d47;cursor:pointer">‹ 목록으로</span></div>
       <article style="margin:12px 20px 0;background:#fff;border:1px solid #d8cdb5;border-radius:14px;padding:17px 16px">
         <div style="display:flex;align-items:center;gap:7px"><span style="font:700 10.5px Pretendard;color:${categoryMeta.color};background:${categoryMeta.background};padding:4px 8px;border-radius:99px">${esc(categoryMeta.label)}</span><span style="margin-left:auto;display:flex;gap:10px">${edit}${del}</span></div>
         <h2 style="font:600 20px 'MaruBuri',serif;color:#211f1a;line-height:1.4;margin:12px 0 0">${esc(selected.title)}</h2>
@@ -930,7 +1114,7 @@ function boardView() {
   const rows = posts().map(post => {
     const commentCount = comments().filter(x => x.postId === post.id).length;
     const categoryMeta = boardCategoryMeta(post.category);
-    return `<div onclick="${h(() => up(() => { S.boardPostId = post.id; S.boardOpen = false; }))}" style="display:flex;align-items:center;gap:10px;padding:14px 4px;border-bottom:1px solid #e8e4da;cursor:pointer">
+    return `<div onclick="${h(() => navigate(() => { S.boardPostId = post.id; S.boardOpen = false; }))}" style="display:flex;align-items:center;gap:10px;padding:14px 4px;border-bottom:1px solid #e8e4da;cursor:pointer">
       <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;gap:6px"><span style="font:700 10.5px Pretendard;color:${categoryMeta.color}">${esc(categoryMeta.label)}</span><span style="font:600 15px Pretendard;color:#211f1a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(post.title)}</span></div><div style="font:400 11.5px Pretendard;color:#8a8578;margin-top:6px">${esc(post.authorName || '작성자')} · ${esc(post.cls || '')} · ${stamp(post.ts)} · 공감 ${(post.likedBy || []).length}</div></div>
       <div style="width:42px;height:48px;border-radius:10px;background:#f4f1ea;display:flex;flex-direction:column;align-items:center;justify-content:center;flex:none"><b style="font:700 14px Pretendard;color:#211f1a">${commentCount}</b><span style="font:500 10px Pretendard;color:#8a8578">댓글</span></div>
     </div>`;
@@ -1042,7 +1226,7 @@ function studentView(st) {
   const t = careType(st);
   const r = rate(st);
   const dash = x => (x && String(x).trim()) ? x : '미입력';
-  const back = h(() => up(() => { S.sid = null; S.edOn = false; S.delArm = false; }));
+  const back = h(() => appBack(() => { S.sid = null; S.edOn = false; S.delArm = false; }));
 
   // 교적 (보기/수정)
   const edFieldDefs = [['ed-name', '이름', st.name], ['ed-phone', '본인 연락처', st.phone], ['ed-fatherPhone', '연락처(부)', st.fatherPhone], ['ed-motherPhone', '연락처(모)', st.motherPhone], ['ed-parentPhone', '연락처(보호자)', st.parentPhone], ['ed-address', '주소', st.address], ['ed-birth', '생년월일', st.birth], ['ed-school', '학교', st.school], ['ed-trait', '성향', st.trait]];
@@ -1156,7 +1340,7 @@ function studentView(st) {
     </div>
     <div style="padding:20px 20px 6px;display:flex;justify-content:space-between;align-items:baseline">
       <span style="font:600 12px Pretendard;color:#8a8578;letter-spacing:.06em">심방·상담 기록</span>
-      <span onclick="${h(() => up(() => { S.sid = null; S.screen = 'carehub'; S.careMode = 'visits'; S.vOpen = true; F['v-stu'] = st.id; }))}" style="font:600 12px Pretendard;color:#2e5d47;cursor:pointer">+ 기록 추가</span>
+      <span onclick="${h(() => navigate(() => { S.sid = null; S.screen = 'carehub'; S.careMode = 'visits'; S.vOpen = true; F['v-stu'] = st.id; }))}" style="font:600 12px Pretendard;color:#2e5d47;cursor:pointer">+ 기록 추가</span>
     </div>
     <div style="display:flex;flex-direction:column;gap:8px;padding:0 20px">
       ${vHtml || `<div style="font:400 13px Pretendard;color:#b5b0a2;padding:6px 2px">아직 기록이 없어요.</div>`}
@@ -1332,7 +1516,7 @@ function render() {
   const NAV = [['home', '홈'], ['attend', '출석'], ['carehub', '돌봄'], ['board', '게시판']];
   const nav = NAV.map(([k, label]) => {
     const on = !st && S.screen === k;
-    return `<div onclick="${h(() => up(() => { S.screen = k; S.sid = null; }))}" style="text-align:center;cursor:pointer">
+    return `<div onclick="${h(() => navigate(() => { S.screen = k; S.sid = null; }))}" style="text-align:center;cursor:pointer">
       <div style="width:5px;height:5px;border-radius:50%;margin:0 auto;background:${on ? '#2e5d47' : 'transparent'}"></div>
       <div style="font:${on ? '700' : '500'} 13px Pretendard;color:${on ? '#2e5d47' : '#8a8578'};margin-top:3px">${label}</div>
     </div>`;
@@ -1354,5 +1538,6 @@ function render() {
   }
 }
 
+installEdgeSwipeBack();
 render();
 initFirebase();
