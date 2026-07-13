@@ -25,6 +25,7 @@ vm.runInContext(source + `
     normalizeBoardCategory, boardCategoryMeta,
     eventOccursOn, eventOverlaps, eventRangeLabel,
     attendanceStatus, classAttendanceStats, curWeek,
+    shirtPeriod: [SHIRT_START, SHIRT_END],
     resetInitialDataLoad, markInitialDataLoaded,
     isUnconfirmedMissingDocument,
     setAuthState: (epoch, user) => { authEpoch = epoch; AUTH = { currentUser: user }; },
@@ -41,6 +42,7 @@ const feature = context.__feature;
 assert.equal(feature.normalizeBoardCategory('\uD68C\uC758\uB85D'), '\uD68C\uC758\uB85D');
 assert.equal(feature.boardCategoryMeta('\uD68C\uC758\uB85D').label, '\uD68C\uC758\uB85D');
 assert.equal(feature.normalizeBoardCategory('\uC54C \uC218 \uC5C6\uC74C'), '\uACF5\uC9C0');
+assert.deepEqual(JSON.parse(JSON.stringify(feature.shirtPeriod)), ['2026-07-06', '2026-07-19']);
 
 const legacyEvent = { date: '2026-07-24' };
 assert.equal(feature.eventOccursOn(legacyEvent, '2026-07-24'), true);
@@ -112,9 +114,18 @@ assert.match(app.innerHTML, /다시 불러오기/);
 
 assert.match(html, /\.app-shell\{max-width:1180px\}/);
 assert.match(html, /@media \(min-width:768px\)/);
+assert.match(html, /\.event-date-grid\{[^}]*grid-template-columns:minmax\(0,1fr\)[^}]*padding:13px 14px[^}]*\}/);
+assert.match(html, /\.event-period\{[^}]*grid-template-columns:minmax\(0,1fr\)[^}]*min-width:0[^}]*\}/);
+assert.match(html, /\.event-field\{[^}]*min-width:0[^}]*padding:0[^}]*border:0[^}]*background:transparent[^}]*\}/);
+assert.match(html, /\.event-field-control\{[^}]*width:100%[^}]*min-width:0[^}]*max-width:100%[^}]*padding:5px 0 6px[^}]*\}/);
+assert.match(html, /@media \(min-width:768px\)\{[\s\S]*?\.event-date-grid\{grid-template-columns:minmax\(0,2fr\) minmax\(150px,1fr\)/);
+assert.match(html, /@media \(min-width:768px\)\{[\s\S]*?\.event-period\{grid-template-columns:minmax\(0,1fr\) auto minmax\(0,1fr\)/);
 assert.doesNotMatch(source, /max-width:390px/);
 assert.match(source, /BOARD_CATEGORIES = \['\uACF5\uC9C0', '\uB098\uB214', '\uD68C\uC758\uB85D'\]/);
 assert.match(source, /id="event-end-date"/);
+assert.equal((source.match(/class="event-field-control"/g) || []).length, 3);
+assert.equal((source.match(/class="event-field(?: event-time-field)?"/g) || []).length, 3);
+assert.doesNotMatch(source, /id="event-(?:date|end-date|time)"[^>]*style="\$\{inputStyle\}/);
 assert.match(source, /doc\(S\.me\.email\)\.update\(\{ \['att\.' \+ CUR\]/);
 assert.match(source, /\[\['students', '\uD559\uC0DD'\], \['teachers', '\uAD50\uC0AC'\]\]/);
 assert.equal((source.match(/onSnapshot\(\{ includeMetadataChanges: true \}/g) || []).length, 8);

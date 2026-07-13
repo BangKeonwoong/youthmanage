@@ -49,7 +49,7 @@ function todayLabel() {
 const LONG_ABS_N = 3, BDAY_DAYS = 30;
 // ── 캠프티 사이즈 조사 (수련회 이벤트 · 기간 한정)
 const SHIRT_SIZES = ['미선택', '130', '140', '150', 'XS', 'S', 'M', 'L', 'XL', '2XL', '3XL', '신청X'];
-const SHIRT_START = '2026-07-06', SHIRT_END = '2026-07-12';
+const SHIRT_START = '2026-07-06', SHIRT_END = '2026-07-19';
 const shirtActive = () => { const t = todayISO(); return t >= SHIRT_START && t <= SHIRT_END; };
 // Retreat attendance survey (limited-time event)
 const RETREAT_STUDENT_OPTIONS = ['\uBBF8\uC120\uD0DD', '\uCC38\uC11D', '\uBD88\uCC38', '\uBD80\uBD84\uCC38\uC11D'];
@@ -1183,10 +1183,14 @@ function calendarView() {
   const form = S.eventOpen ? `<div style="margin-top:10px;background:#fff;border:1px solid #cfc9ba;border-radius:14px;padding:14px;display:flex;flex-direction:column;gap:8px;animation:sectionReveal .2s ease-out">
     <div style="font:600 14px 'MaruBuri',serif;color:#211f1a">${S.eventEditId ? '일정 수정' : '새 일정'}</div>
     <input id="event-title" maxlength="80" value="${esc(fv('event-title'))}" placeholder="일정 제목" style="${inputStyle}">
+    <div class="event-schedule-heading"><span class="event-schedule-title">날짜와 시간</span><span class="event-schedule-help">여러 날 일정은 종료일까지 선택</span></div>
     <div class="event-date-grid">
-      <label style="font:600 11px Pretendard;color:#8a8578">시작일<input id="event-date" type="date" value="${esc(fv('event-date') || S.calendarDate)}" onchange="const end=document.getElementById('event-end-date');end.min=this.value;if(!end.value||end.value&lt;this.value)end.value=this.value" style="${inputStyle};width:100%;margin-top:5px"></label>
-      <label style="font:600 11px Pretendard;color:#8a8578">종료일<input id="event-end-date" type="date" min="${esc(fv('event-date') || S.calendarDate)}" value="${esc(fv('event-end-date') || fv('event-date') || S.calendarDate)}" style="${inputStyle};width:100%;margin-top:5px"></label>
-      <label class="event-time-field" style="font:600 11px Pretendard;color:#8a8578">시간 · 선택<input id="event-time" type="time" value="${esc(fv('event-time'))}" style="${inputStyle};width:100%;margin-top:5px"></label>
+      <div class="event-period">
+        <label class="event-field"><span class="event-field-label">시작일</span><input class="event-field-control" id="event-date" type="date" value="${esc(fv('event-date') || S.calendarDate)}" onchange="const end=document.getElementById('event-end-date');end.min=this.value;if(!end.value||end.value&lt;this.value)end.value=this.value"></label>
+        <span class="event-range-arrow" aria-hidden="true">→</span>
+        <label class="event-field"><span class="event-field-label">종료일</span><input class="event-field-control" id="event-end-date" type="date" min="${esc(fv('event-date') || S.calendarDate)}" value="${esc(fv('event-end-date') || fv('event-date') || S.calendarDate)}"></label>
+      </div>
+      <label class="event-field event-time-field"><span class="event-field-label">시간 · 선택</span><input class="event-field-control" id="event-time" type="time" value="${esc(fv('event-time'))}"></label>
     </div>
     <textarea id="event-note" maxlength="1000" placeholder="장소, 준비물, 안내사항 등" style="${inputStyle};min-height:74px;resize:vertical">${esc(fv('event-note'))}</textarea>
     <div onclick="${h(() => up(() => { S.eventPollEnabled = !S.eventPollEnabled; }))}" style="display:flex;align-items:center;gap:9px;padding:10px 11px;border:1px solid ${S.eventPollEnabled ? '#9db8a8' : '#e8e4da'};border-radius:10px;cursor:pointer;background:${S.eventPollEnabled ? '#f1f6f1' : '#faf8f3'}"><span style="width:20px;height:20px;border-radius:6px;display:flex;align-items:center;justify-content:center;font:700 12px Pretendard;${S.eventPollEnabled ? 'background:#2e5d47;color:#fff' : 'border:1.5px solid #cfc9ba;color:transparent'}">✓</span><div><div style="font:600 13px Pretendard;color:#211f1a">참석 여부 투표 사용</div><div style="font:400 11px Pretendard;color:#8a8578;margin-top:2px">참석·불참·미정으로 응답을 받습니다.</div></div></div>

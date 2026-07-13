@@ -18,16 +18,28 @@ textarea:focus,input:focus,select:focus{outline:2px solid #2e5d47;outline-offset
 .dashboard-card-grid{display:grid!important;grid-template-columns:1fr;gap:8px!important}
 .attendance-class-grid{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important}
 .teacher-attendance-grid{display:grid!important;grid-template-columns:1fr;gap:8px!important}
-.event-date-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.event-time-field{grid-column:1/-1}
+.event-schedule-heading{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-top:2px}
+.event-schedule-title{font:600 12px Pretendard;color:#5c584c}
+.event-schedule-help{font:400 10.5px Pretendard;color:#aaa496;text-align:right}
+.event-date-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;padding:13px 14px;border:1px solid #e8e4da;border-radius:12px;background:#faf8f3}
+.event-period{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-width:0}
+.event-field{display:grid;gap:5px;min-width:0;padding:0;border:0;background:transparent}
+.event-field-label{font:600 10.5px Pretendard;color:#8a8578;letter-spacing:.02em}
+.event-field-control{display:block;width:100%;min-width:0;max-width:100%;padding:5px 0 6px;border:0;border-bottom:1px solid #cfc9ba;border-radius:0;background:transparent;font:500 16px Pretendard;color:#211f1a}
+.event-field-control:focus{border-bottom-color:#2e5d47;box-shadow:0 1px 0 #2e5d47}
+.event-field-control::-webkit-date-and-time-value{text-align:left}
+.event-range-arrow{display:none;color:#8a8578;font:600 14px Pretendard;align-self:end;padding-bottom:7px}
+.event-time-field{min-width:0;padding-top:12px;border-top:1px solid #e8e4da}
 .calendar-cell{min-height:54px}
 @keyframes sectionReveal{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
 @media (min-width:768px){
   .dashboard-card-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
   .attendance-class-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important}
   .teacher-attendance-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
-  .event-date-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
-  .event-time-field{grid-column:auto}
+  .event-date-grid{grid-template-columns:minmax(0,2fr) minmax(150px,1fr);gap:18px;align-items:end}
+  .event-period{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:10px;align-items:end}
+  .event-range-arrow{display:block}
+  .event-time-field{padding-top:0;padding-left:18px;border-top:0;border-left:1px solid #e8e4da}
   .calendar-cell{min-height:72px!important;padding-top:10px!important}
 }
 @media (min-width:1100px){
@@ -44,6 +56,6 @@ textarea:focus,input:focus,select:focus{outline:2px solid #2e5d47;outline-offset
 </head>
 <body>
 <div id="app"></div>
-<script src="app.js"></script>
+<script src="app.js?v=20260713-event-form"></script>
 </body>
 </html>
