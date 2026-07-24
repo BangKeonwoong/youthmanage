@@ -13,6 +13,7 @@ let S = {
   edOn: false, edSacr: '없음', adOpen: false,
   delArm: false, loginErr: '', loaded: false, busy: false, shirtPick: null, shirtPickU: null,
   retreatPick: null, retreatPickU: null, shirtStatsOpen: false, retreatStatsOpen: false,
+  contactChoice: null,
   lastScrollTop: 0, scrollPositions: {}
 };
 const NAV_STATE_FIELDS = ['screen', 'sid', 'cls', 'communityMode', 'boardPostId', 'calendarMonth', 'calendarDate', 'careMode', 'attendanceTab'];
@@ -346,7 +347,7 @@ function applyNavigationState(view) {
   NAV_STATE_FIELDS.forEach(key => { if (Object.prototype.hasOwnProperty.call(view, key)) S[key] = view[key]; });
   S.edOn = false; S.delArm = false; S.boardOpen = false; S.boardEditId = null;
   S.eventOpen = false; S.eventEditId = null; S.eventPollEnabled = false;
-  S.vOpen = false; S.adOpen = false; clearF('comment-'); clearF('board-'); clearF('event-');
+  S.vOpen = false; S.adOpen = false; S.contactChoice = null; clearF('comment-'); clearF('board-'); clearF('event-');
 }
 function initNavigationHistory() {
   if (!S.me || !historySupported()) { navigationDepth = 0; return; }
@@ -376,6 +377,7 @@ function navigate(mut) {
   render();
 }
 function closeTransientView() {
+  if (S.contactChoice) { S.contactChoice = null; return true; }
   if (S.edOn) { S.edOn = false; clearF('ed-'); return true; }
   if (S.delArm) { S.delArm = false; return true; }
   if (S.boardOpen) {
@@ -400,7 +402,7 @@ function fallbackBack() {
   return false;
 }
 function canAppBack() {
-  return !!(S.edOn || S.delArm || S.boardOpen || S.eventOpen || S.vOpen || S.adOpen ||
+  return !!(S.contactChoice || S.edOn || S.delArm || S.boardOpen || S.eventOpen || S.vOpen || S.adOpen ||
     S.shirtPick || S.shirtPickU || S.retreatPick || S.retreatPickU || navigationDepth > 0 ||
     S.sid || S.boardPostId || S.screen !== 'home' || (S.me && S.me.role === 'pastor' && S.cls !== '전체'));
 }
@@ -524,6 +526,43 @@ const inputStyle = 'padding:10px 12px;border:1px solid #e8e4da;border-radius:10p
 const primaryBtn = 'padding:12px;border-radius:10px;background:#2e5d47;text-align:center;font:600 14px Pretendard;color:#f5f2ea;cursor:pointer';
 const darkBtn = 'padding:12px;border-radius:10px;background:#211f1a;text-align:center;font:600 14px Pretendard;color:#f5f2ea;cursor:pointer';
 const secLabel = 'padding:20px 20px 6px;font:600 12px Pretendard;color:#8a8578;letter-spacing:.06em';
+
+function normalizePhoneNumber(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const compact = raw.replace(/[^\d+]/g, '');
+  const normalized = compact.charAt(0) === '+'
+    ? '+' + compact.slice(1).replace(/\+/g, '')
+    : compact.replace(/\+/g, '');
+  return normalized.replace(/\D/g, '').length >= 3 ? normalized : '';
+}
+
+function contactActionSheet() {
+  const contact = S.contactChoice;
+  if (!contact) return '';
+  const phone = normalizePhoneNumber(contact.phone);
+  if (!phone) return '';
+  const close = h(() => up(() => { S.contactChoice = null; }));
+  const launch = scheme => h(event => {
+    event.preventDefault();
+    const href = scheme + ':' + phone;
+    S.contactChoice = null;
+    capture(); render();
+    window.location.href = href;
+  });
+  return `<div onclick="${close}" role="presentation" style="position:absolute;inset:0;z-index:20;background:rgba(33,31,26,.38);display:flex;align-items:flex-end;justify-content:center;padding:12px;padding-bottom:max(12px,env(safe-area-inset-bottom));animation:contactFade .16s ease-out">
+    <div onclick="event.stopPropagation()" role="dialog" aria-modal="true" aria-labelledby="contact-action-title" style="width:min(100%,520px);background:#faf8f3;border:1px solid #e8e4da;border-radius:20px;padding:8px 14px 14px;box-shadow:0 18px 48px rgba(33,31,26,.28);animation:contactSheetUp .2s cubic-bezier(.22,1,.36,1)">
+      <div aria-hidden="true" style="width:38px;height:4px;border-radius:99px;background:#cfc9ba;margin:2px auto 12px"></div>
+      <div id="contact-action-title" style="font:600 18px 'MaruBuri',serif;color:#211f1a;text-align:center">연락 방법 선택</div>
+      <div style="font:500 13px Pretendard;color:#8a8578;text-align:center;margin-top:5px">${esc(contact.label)} · ${esc(contact.phone)}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px">
+        <a href="tel:${esc(phone)}" onclick="${launch('tel')}" aria-label="${esc(contact.label)} ${esc(contact.phone)} 전화 걸기" style="min-height:52px;border-radius:12px;background:#2e5d47;color:#fff;text-decoration:none;display:flex;align-items:center;justify-content:center;font:700 15px Pretendard">전화 걸기</a>
+        <a href="sms:${esc(phone)}" onclick="${launch('sms')}" aria-label="${esc(contact.label)} ${esc(contact.phone)} 문자 보내기" style="min-height:52px;border-radius:12px;background:#4c6b82;color:#fff;text-decoration:none;display:flex;align-items:center;justify-content:center;font:700 15px Pretendard">문자 보내기</a>
+      </div>
+      <button type="button" onclick="${close}" style="width:100%;min-height:48px;margin-top:8px;border:1px solid #e8e4da;border-radius:12px;background:#fff;color:#6d6a5f;font:600 14px Pretendard;cursor:pointer">취소</button>
+    </div>
+  </div>`;
+}
 
 // ══ 선생님 캠프티 입력 (이벤트 기간에만 표시)
 function userShirtRows(list) {
@@ -1257,12 +1296,19 @@ function studentView(st) {
     </div>
     <div onclick="${edSave}" style="${primaryBtn};margin-top:4px">교적 저장</div>
   </div>`;
-  const infoRows = [['연락처 (본인)', dash(st.phone)], ['연락처 (부)', dash(st.fatherPhone)], ['연락처 (모)', dash(st.motherPhone)], ['연락처 (보호자)', dash(st.parentPhone)], ['주소', dash(st.address)], ['생년월일', dash(st.birth)], ['학교', dash(st.school)], ['신급 (세례·입교)', st.sacr || '없음'], ['성향', dash(st.trait)]];
+  const infoRows = [['연락처 (본인)', st.phone, true], ['연락처 (부)', st.fatherPhone, true], ['연락처 (모)', st.motherPhone, true], ['연락처 (보호자)', st.parentPhone, true], ['주소', st.address], ['생년월일', st.birth], ['학교', st.school], ['신급 (세례·입교)', st.sacr || '없음'], ['성향', st.trait]];
   const infoView = `<div style="margin:0 20px;background:#fff;border:1px solid #e8e4da;border-radius:14px;padding:4px 16px">
-    ${infoRows.map(([label, value]) => `<div style="display:flex;justify-content:space-between;gap:16px;padding:11px 0;border-bottom:1px solid #eeeade">
+    ${infoRows.map(([label, rawValue, isPhone]) => {
+      const value = dash(rawValue);
+      const phone = isPhone ? normalizePhoneNumber(rawValue) : '';
+      const shownValue = phone
+        ? `<button type="button" onclick="${h(() => up(() => { S.contactChoice = { label, phone: String(rawValue).trim() }; }))}" aria-haspopup="dialog" aria-label="${esc(label)} ${esc(value)}, 연락 방법 선택" style="min-height:44px;margin:-8px 0;padding:8px 0 8px 14px;border:0;background:transparent;color:#2e5d47;text-align:right;font:700 14px Pretendard;cursor:pointer;text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:3px">${esc(value)} <span aria-hidden="true" style="text-decoration:none">›</span></button>`
+        : `<span style="font:500 13px Pretendard;color:#211f1a;text-align:right">${esc(value)}</span>`;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:16px;padding:11px 0;border-bottom:1px solid #eeeade">
       <span style="font:500 13px Pretendard;color:#8a8578;flex:none">${label}</span>
-      <span style="font:500 13px Pretendard;color:#211f1a;text-align:right">${esc(value)}</span>
-    </div>`).join('')}
+      ${shownValue}
+    </div>`;
+    }).join('')}
     <div style="height:6px"></div>
   </div>`;
 
@@ -1533,6 +1579,7 @@ function render() {
       <div style="background:#211f1a;color:#f5f2ea;font:500 13px Pretendard;padding:10px 18px;border-radius:99px;box-shadow:0 4px 14px rgba(33,31,26,.25)">${esc(S.toast)}</div>
     </div>` : ''}
     <div id="bottom-nav" style="position:absolute;left:0;right:0;bottom:0;background:rgba(250,248,243,.96);backdrop-filter:blur(12px);border-top:1px solid #e8e4da;display:grid;grid-template-columns:repeat(4,1fr);padding:10px 0 14px;z-index:4;transform:translateY(0);transition:transform .28s cubic-bezier(.22,1,.36,1);will-change:transform">${nav}</div>
+    ${contactActionSheet()}
   </div>`;
   el.dataset.viewKey = viewKey;
   const nextScroll = document.getElementById('app-scroll');
